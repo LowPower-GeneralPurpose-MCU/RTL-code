@@ -342,42 +342,46 @@ module top_soc (
     wire [6:0] s5_arid; wire [31:0] s5_araddr; wire [7:0] s5_arlen; wire [2:0] s5_arsize; wire [1:0] s5_arburst; wire [2:0] s5_arprot; wire s5_arvalid; wire s5_arready;
     wire [6:0] s5_rid; wire [31:0] s5_rdata; wire [1:0] s5_rresp; wire s5_rlast; wire s5_rvalid; wire s5_rready;
 
-    assign {s5_awready, s4_awready, s3_awready, s2_awready, s1_awready, s0_awready} = s_axi_awready;
-    assign s_axi_awid    = {s5_awid, s4_awid, s3_awid, s2_awid, s1_awid, s0_awid};
-    assign s_axi_awaddr  = {s5_awaddr, s4_awaddr, s3_awaddr, s2_awaddr, s1_awaddr, s0_awaddr};
-    assign s_axi_awlen   = {s5_awlen, s4_awlen, s3_awlen, s2_awlen, s1_awlen, s0_awlen};
-    assign s_axi_awsize  = {s5_awsize, s4_awsize, s3_awsize, s2_awsize, s1_awsize, s0_awsize};
-    assign s_axi_awburst = {s5_awburst, s4_awburst, s3_awburst, s2_awburst, s1_awburst, s0_awburst};
-    assign s_axi_awprot  = {s5_awprot, s4_awprot, s3_awprot, s2_awprot, s1_awprot, s0_awprot};
-    assign s_axi_awvalid = {s5_awvalid, s4_awvalid, s3_awvalid, s2_awvalid, s1_awvalid, s0_awvalid};
+    // --- Channel WRITE ADDRESS ---
+    assign s_axi_awready = {s5_awready, s4_awready, s3_awready, s2_awready, s1_awready, s0_awready};
+    assign {s5_awid, s4_awid, s3_awid, s2_awid, s1_awid, s0_awid}       = s_axi_awid;
+    assign {s5_awaddr, s4_awaddr, s3_awaddr, s2_awaddr, s1_awaddr, s0_awaddr} = s_axi_awaddr;
+    assign {s5_awlen, s4_awlen, s3_awlen, s2_awlen, s1_awlen, s0_awlen}   = s_axi_awlen;
+    assign {s5_awsize, s4_awsize, s3_awsize, s2_awsize, s1_awsize, s0_awsize} = s_axi_awsize;
+    assign {s5_awburst, s4_awburst, s3_awburst, s2_awburst, s1_awburst, s0_awburst} = s_axi_awburst;
+    assign {s5_awprot, s4_awprot, s3_awprot, s2_awprot, s1_awprot, s0_awprot} = s_axi_awprot;
+    assign {s5_awvalid, s4_awvalid, s3_awvalid, s2_awvalid, s1_awvalid, s0_awvalid} = s_axi_awvalid;
 
-    assign {s5_wready, s4_wready, s3_wready, s2_wready, s1_wready, s0_wready} = s_axi_wready;
-    assign s_axi_wdata   = {s5_wdata, s4_wdata, s3_wdata, s2_wdata, s1_wdata, s0_wdata};
-    assign s_axi_wstrb   = {s5_wstrb, s4_wstrb, s3_wstrb, s2_wstrb, s1_wstrb, s0_wstrb};
-    assign s_axi_wlast   = {s5_wlast, s4_wlast, s3_wlast, s2_wlast, s1_wlast, s0_wlast};
-    assign s_axi_wvalid  = {s5_wvalid, s4_wvalid, s3_wvalid, s2_wvalid, s1_wvalid, s0_wvalid};
+    // --- Channel WRITE DATA ---
+    assign s_axi_wready  = {s5_wready, s4_wready, s3_wready, s2_wready, s1_wready, s0_wready};
+    assign {s5_wdata, s4_wdata, s3_wdata, s2_wdata, s1_wdata, s0_wdata}   = s_axi_wdata;
+    assign {s5_wstrb, s4_wstrb, s3_wstrb, s2_wstrb, s1_wstrb, s0_wstrb}   = s_axi_wstrb;
+    assign {s5_wlast, s4_wlast, s3_wlast, s2_wlast, s1_wlast, s0_wlast}   = s_axi_wlast;
+    assign {s5_wvalid, s4_wvalid, s3_wvalid, s2_wvalid, s1_wvalid, s0_wvalid} = s_axi_wvalid;
 
-    assign s_axi_bready  = {s5_bready, s4_bready, s3_bready, s2_bready, s1_bready, s0_bready};
-    assign {s5_bid, s4_bid, s3_bid, s2_bid, s1_bid, s0_bid}             = s_axi_bid;
-    assign {s5_bresp, s4_bresp, s3_bresp, s2_bresp, s1_bresp, s0_bresp}   = s_axi_bresp;
-    assign {s5_bvalid, s4_bvalid, s3_bvalid, s2_bvalid, s1_bvalid, s0_bvalid} = s_axi_bvalid;
+    // --- Channel WRITE RESPONSE ---
+    assign {s5_bready, s4_bready, s3_bready, s2_bready, s1_bready, s0_bready} = s_axi_bready;
+    assign s_axi_bid     = {s5_bid, s4_bid, s3_bid, s2_bid, s1_bid, s0_bid};
+    assign s_axi_bresp   = {s5_bresp, s4_bresp, s3_bresp, s2_bresp, s1_bresp, s0_bresp};
+    assign s_axi_bvalid  = {s5_bvalid, s4_bvalid, s3_bvalid, s2_bvalid, s1_bvalid, s0_bvalid};
 
-    assign {s5_arready, s4_arready, s3_arready, s2_arready, s1_arready, s0_arready} = s_axi_arready;
-    assign s_axi_arid    = {s5_arid, s4_arid, s3_arid, s2_arid, s1_arid, s0_arid};
-    assign s_axi_araddr  = {s5_araddr, s4_araddr, s3_araddr, s2_araddr, s1_araddr, s0_araddr};
-    assign s_axi_arlen   = {s5_arlen, s4_arlen, s3_arlen, s2_arlen, s1_arlen, s0_arlen};
-    assign s_axi_arsize  = {s5_arsize, s4_arsize, s3_arsize, s2_arsize, s1_arsize, s0_arsize};
-    assign s_axi_arburst = {s5_arburst, s4_arburst, s3_arburst, s2_arburst, s1_arburst, s0_arburst};
-    assign s_axi_arprot  = {s5_arprot, s4_arprot, s3_arprot, s2_arprot, s1_arprot, s0_arprot};
-    assign s_axi_arvalid = {s5_arvalid, s4_arvalid, s3_arvalid, s2_arvalid, s1_arvalid, s0_arvalid};
+    // --- Channel READ ADDRESS ---
+    assign s_axi_arready = {s5_arready, s4_arready, s3_arready, s2_arready, s1_arready, s0_arready};
+    assign {s5_arid, s4_arid, s3_arid, s2_arid, s1_arid, s0_arid}       = s_axi_arid;
+    assign {s5_araddr, s4_araddr, s3_araddr, s2_araddr, s1_araddr, s0_araddr} = s_axi_araddr;
+    assign {s5_arlen, s4_arlen, s3_arlen, s2_arlen, s1_arlen, s0_arlen}   = s_axi_arlen;
+    assign {s5_arsize, s4_arsize, s3_arsize, s2_arsize, s1_arsize, s0_arsize} = s_axi_arsize;
+    assign {s5_arburst, s4_arburst, s3_arburst, s2_arburst, s1_arburst, s0_arburst} = s_axi_arburst;
+    assign {s5_arprot, s4_arprot, s3_arprot, s2_arprot, s1_arprot, s0_arprot} = s_axi_arprot;
+    assign {s5_arvalid, s4_arvalid, s3_arvalid, s2_arvalid, s1_arvalid, s0_arvalid} = s_axi_arvalid;
 
-    assign s_axi_rready  = {s5_rready, s4_rready, s3_rready, s2_rready, s1_rready, s0_rready};
-    assign {s5_rid, s4_rid, s3_rid, s2_rid, s1_rid, s0_rid}             = s_axi_rid;
-    assign {s5_rdata, s4_rdata, s3_rdata, s2_rdata, s1_rdata, s0_rdata}   = s_axi_rdata;
-    assign {s5_rresp, s4_rresp, s3_rresp, s2_rresp, s1_rresp, s0_rresp}   = s_axi_rresp;
-    assign {s5_rlast, s4_rlast, s3_rlast, s2_rlast, s1_rlast, s0_rlast}   = s_axi_rlast;
-    assign {s5_rvalid, s4_rvalid, s3_rvalid, s2_rvalid, s1_rvalid, s0_rvalid} = s_axi_rvalid;
-
+    // --- Channel READ DATA ---
+    assign {s5_rready, s4_rready, s3_rready, s2_rready, s1_rready, s0_rready} = s_axi_rready;
+    assign s_axi_rid     = {s5_rid, s4_rid, s3_rid, s2_rid, s1_rid, s0_rid};
+    assign s_axi_rdata   = {s5_rdata, s4_rdata, s3_rdata, s2_rdata, s1_rdata, s0_rdata};
+    assign s_axi_rresp   = {s5_rresp, s4_rresp, s3_rresp, s2_rresp, s1_rresp, s0_rresp};
+    assign s_axi_rlast   = {s5_rlast, s4_rlast, s3_rlast, s2_rlast, s1_rlast, s0_rlast};
+    assign s_axi_rvalid  = {s5_rvalid, s4_rvalid, s3_rvalid, s2_rvalid, s1_rvalid, s0_rvalid};
     // =========================================================================
     // 6. INSTANTIATE CÁC MASTER MODULES
     // =========================================================================    
