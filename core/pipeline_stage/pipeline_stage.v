@@ -22,12 +22,18 @@ module instruction_fetch (
     input wire actual_taken, 
     input wire bpu_correct,
     input wire [31:0] predict_target,
+    input wire fetch_two_valid,
     output reg [31:0] pc_out, 
     output wire [31:0] pc_plus_4,
+    output wire [31:0] pc_plus_8,
     output wire [31:0] instr,
+    output wire [31:0] instr_lane1,
     output wire icache_read_req,
+    output wire icache_read_req_lane1,
     output wire [31:0] icache_addr,
-    input wire [31:0] icache_read_data
+    output wire [31:0] icache_addr_lane1,
+    input wire [31:0] icache_read_data,
+    input wire [31:0] icache_read_data_lane1
 );
 
     always @(*) begin
@@ -48,16 +54,20 @@ module instruction_fetch (
         end else if (btb_hit && predict_taken) begin
             pc_out = predict_target;
         end else if (!flush_temp) begin
-            pc_out = pc_in + 32'd4;
+            pc_out = fetch_two_valid ? (pc_in + 32'd8) : (pc_in + 32'd4);
         end else begin
             pc_out = pc_in;
         end
     end
     
     assign icache_read_req = 1'b1;
+    assign icache_read_req_lane1 = 1'b1;
     assign icache_addr = pc_in;
+    assign icache_addr_lane1 = pc_in + 32'd4;
     assign instr = icache_read_data;
+    assign instr_lane1 = icache_read_data_lane1;
     assign pc_plus_4 = pc_in + 32'd4;
+    assign pc_plus_8 = pc_in + 32'd8;
 
 endmodule
 
@@ -194,7 +204,12 @@ module instruction_decode (
 endmodule
 
 
-module execute (
+module execute #(
+    parameter ENABLE_MULDIV = 1,
+    parameter ENABLE_FPU    = 1,
+    parameter ENABLE_CSR    = 1,
+    parameter ENABLE_BRANCH = 1
+)(
     input clk,
     input reset_n,
     input stall_id_ex,
@@ -240,44 +255,61 @@ module execute (
     
     wire [31:0] fpu_operand_a = id_ex_x_to_f ? alu_in1 : id_ex_read_f_data1;
 
-    multiplier MUL (
-        .clk(clk),
-        .reset_n(reset_n),
-        .stall_id_ex(stall_id_ex),
-        .md_type(id_ex_md_type),
-        .alu_in1(alu_in1),
-        .alu_in2(alu_in2),
-        .md_operation(id_ex_md_operation),
-        .md_result(mul_result),
-        .md_alu_stall(mul_alu_stall),
-        .md_alu_done(mul_alu_done)
-    );
+    generate
+        if (ENABLE_MULDIV) begin : gen_muldiv
+            multiplier MUL (
+                .clk(clk),
+                .reset_n(reset_n),
+                .stall_id_ex(stall_id_ex),
+                .md_type(id_ex_md_type),
+                .alu_in1(alu_in1),
+                .alu_in2(alu_in2),
+                .md_operation(id_ex_md_operation),
+                .md_result(mul_result),
+                .md_alu_stall(mul_alu_stall),
+                .md_alu_done(mul_alu_done)
+            );
 
-    divider DIV (
-        .clk(clk),
-        .reset_n(reset_n),
-        .stall_id_ex(stall_id_ex),
-        .md_type(id_ex_md_type),
-        .alu_in1(alu_in1),
-        .alu_in2(alu_in2),
-        .md_operation(id_ex_md_operation),
-        .md_result(div_result),
-        .md_alu_stall(div_alu_stall),
-        .md_alu_done(div_alu_done)
-    );
+            divider DIV (
+                .clk(clk),
+                .reset_n(reset_n),
+                .stall_id_ex(stall_id_ex),
+                .md_type(id_ex_md_type),
+                .alu_in1(alu_in1),
+                .alu_in2(alu_in2),
+                .md_operation(id_ex_md_operation),
+                .md_result(div_result),
+                .md_alu_stall(div_alu_stall),
+                .md_alu_done(div_alu_done)
+            );
+        end else begin : no_muldiv
+            assign mul_result = 32'd0;
+            assign div_result = 32'd0;
+            assign mul_alu_stall = 1'b0;
+            assign div_alu_stall = 1'b0;
+            assign mul_alu_done = 1'b0;
+            assign div_alu_done = 1'b0;
+        end
 
-    fpu_unit FPU (
-        .clk(clk),
-        .reset_n(reset_n),
-        .stall_id_ex(stall_id_ex),
-        .fpu_start(id_ex_fpu_en),
-        .fpu_op(id_ex_fpu_operation),
-        .operand_a(fpu_operand_a),
-        .operand_b(id_ex_read_f_data2),
-        .result(fpu_result),
-        .fpu_stall(fpu_stall),
-        .fpu_done(fpu_done)
-    );
+        if (ENABLE_FPU) begin : gen_fpu
+            fpu_unit FPU (
+                .clk(clk),
+                .reset_n(reset_n),
+                .stall_id_ex(stall_id_ex),
+                .fpu_start(id_ex_fpu_en),
+                .fpu_op(id_ex_fpu_operation),
+                .operand_a(fpu_operand_a),
+                .operand_b(id_ex_read_f_data2),
+                .result(fpu_result),
+                .fpu_stall(fpu_stall),
+                .fpu_done(fpu_done)
+            );
+        end else begin : no_fpu
+            assign fpu_result = 32'd0;
+            assign fpu_stall = 1'b0;
+            assign fpu_done = 1'b0;
+        end
+    endgenerate
 
     assign fpu_result_out = fpu_result;
     assign mf_alu_stall = mul_alu_stall || div_alu_stall || fpu_stall;
@@ -288,7 +320,7 @@ module execute (
         branch_taken = 1'b0;
         csr_write_data = 32'b0;
         
-        if (id_ex_csr_we) begin
+        if (ENABLE_CSR && id_ex_csr_we) begin
             alu_result = csr_read_data;
             case (id_ex_csr_op)
                 2'b01: csr_write_data = csr_rs1_val;
@@ -296,13 +328,13 @@ module execute (
                 2'b11: csr_write_data = csr_read_data & ~csr_rs1_val;
                 default: csr_write_data = csr_rs1_val;
             endcase
-        end else if (id_ex_f_to_x) begin
+        end else if (ENABLE_FPU && id_ex_f_to_x) begin
             alu_result = fpu_result;
         end else if (id_ex_lui) begin
             alu_result = id_ex_ext_imm;
         end else if (id_ex_auipc) begin
             alu_result = id_ex_pc_in + id_ex_ext_imm;
-        end else if (id_ex_md_type) begin
+        end else if (ENABLE_MULDIV && id_ex_md_type) begin
             if (mul_alu_done) begin
                 alu_result = mul_result;
             end else if (div_alu_done) begin
@@ -317,7 +349,7 @@ module execute (
                 4'b0010: alu_result = alu_in1 + alu_in2;  
                 4'b0110: begin 
                     alu_result = alu_in1 - alu_in2;  
-                    if (id_ex_branch) begin
+                    if (ENABLE_BRANCH && id_ex_branch) begin
                         case (id_ex_funct3)
                             3'b000: branch_taken = (alu_result == 32'd0); 
                             3'b001: branch_taken = (alu_result != 32'd0); 
