@@ -20,12 +20,12 @@ module if_id_register (
             if_id_predict_taken <= 1'b0;
             if_id_btb_hit <= 1'b0;
         end else if (riscv_start && !riscv_done) begin            
-            if (stall) begin
-                // Đóng băng, không thay đổi giá trị
-            end else if (flush) begin
+            if (flush) begin
                 if_id_instr <= 32'h00000013; // NOP (addi x0, x0, 0)
                 if_id_predict_taken <= 1'b0;
                 if_id_btb_hit <= 1'b0;
+            end else if (stall) begin
+                // Đóng băng, không thay đổi giá trị
             end else begin
                 if_id_pc_in <= pc_in;
                 if_id_instr <= instr;
@@ -107,9 +107,41 @@ module id_ex_register (
             id_ex_ecall <= 1'b0; id_ex_mret <= 1'b0; id_ex_ebreak <= 1'b0;
             // (Reset các biến khác nếu cần, nhưng các tín hiệu điều khiển trên là quan trọng nhất)
         end else if (riscv_start && !riscv_done) begin
-            if (stall) begin
+            if (flush) begin
+                // BÆ¡m NOP (Chá»‰ cáº§n táº¯t cÃ¡c cá» thay Ä‘á»•i tráº¡ng thÃ¡i há»‡ thá»‘ng)
+                id_ex_instr <= 32'h00000013;
+                id_ex_rob_valid <= 1'b0;
+                id_ex_reg_write <= 1'b0;
+                id_ex_alu_src <= 1'b0;
+                id_ex_mem_write <= 1'b0;
+                id_ex_mem_read <= 1'b0;
+                id_ex_mem_to_reg <= 1'b0;
+                id_ex_branch <= 1'b0;
+                id_ex_jal <= 1'b0;
+                id_ex_jalr <= 1'b0;
+                id_ex_lui <= 1'b0;
+                id_ex_auipc <= 1'b0;
+                id_ex_mem_unsigned <= 1'b0;
+                id_ex_mem_size <= 2'b00;
+                id_ex_alu_ctrl <= 4'b0010;
+                id_ex_predict_taken <= 1'b0;
+                id_ex_btb_hit <= 1'b0;
+                id_ex_ecall <= 1'b0; 
+                id_ex_ebreak <= 1'b0; 
+                id_ex_mret <= 1'b0; 
+                id_ex_csr_we <= 1'b0;
+                id_ex_csr_op <= 2'b00;
+                id_ex_md_type <= 1'b0;
+                id_ex_md_operation <= 3'b000;
+                id_ex_fpu_en <= 1'b0;
+                id_ex_f_reg_write <= 1'b0;
+                id_ex_f_mem_to_reg <= 1'b0;
+                id_ex_f_mem_write <= 1'b0;
+                id_ex_f_to_x <= 1'b0;
+                id_ex_x_to_f <= 1'b0;
+            end else if (stall) begin
                 // Đóng băng
-            end else if (flush) begin
+            end else if (1'b0) begin
                 // Bơm NOP (Chỉ cần tắt các cờ thay đổi trạng thái hệ thống)
                 id_ex_instr <= 32'h00000013;
                 id_ex_rob_valid <= 1'b0;
@@ -126,6 +158,8 @@ module id_ex_register (
                 id_ex_mem_unsigned <= 1'b0;
                 id_ex_mem_size <= 2'b00;
                 id_ex_alu_ctrl <= 4'b0010;
+                id_ex_predict_taken <= 1'b0;
+                id_ex_btb_hit <= 1'b0;
                 id_ex_ecall <= 1'b0; 
                 id_ex_ebreak <= 1'b0; 
                 id_ex_mret <= 1'b0; 
@@ -218,16 +252,38 @@ module ex_mem_register (
             ex_mem_ecall <= 1'b0; ex_mem_ebreak <= 1'b0; ex_mem_mret <= 1'b0;
             ex_mem_f_reg_write <= 1'b0; ex_mem_f_mem_to_reg <= 1'b0; ex_mem_f_mem_write <= 1'b0;
         end else if (riscv_start && !riscv_done) begin
-            if (stall) begin
-                // Đóng băng
-            end else if (flush) begin
+            if (flush) begin
                 ex_mem_instr <= 32'h00000013;
                 ex_mem_rob_valid <= 1'b0;
                 ex_mem_reg_write <= 1'b0;
                 ex_mem_mem_write <= 1'b0;
                 ex_mem_mem_read <= 1'b0;
+                ex_mem_mem_to_reg <= 1'b0;
                 ex_mem_branch <= 1'b0;
+                ex_mem_branch_taken <= 1'b0;
                 ex_mem_jal <= 1'b0;
+                ex_mem_predict_taken <= 1'b0;
+                ex_mem_btb_hit <= 1'b0;
+                ex_mem_ecall <= 1'b0;
+                ex_mem_ebreak <= 1'b0; 
+                ex_mem_mret <= 1'b0; 
+                ex_mem_csr_we <= 1'b0;
+                ex_mem_f_reg_write <= 1'b0;
+                ex_mem_f_mem_write <= 1'b0;
+            end else if (stall) begin
+                // Đóng băng
+            end else if (1'b0) begin
+                ex_mem_instr <= 32'h00000013;
+                ex_mem_rob_valid <= 1'b0;
+                ex_mem_reg_write <= 1'b0;
+                ex_mem_mem_write <= 1'b0;
+                ex_mem_mem_read <= 1'b0;
+                ex_mem_mem_to_reg <= 1'b0;
+                ex_mem_branch <= 1'b0;
+                ex_mem_branch_taken <= 1'b0;
+                ex_mem_jal <= 1'b0;
+                ex_mem_predict_taken <= 1'b0;
+                ex_mem_btb_hit <= 1'b0;
                 ex_mem_ecall <= 1'b0;
                 ex_mem_ebreak <= 1'b0; 
                 ex_mem_mret <= 1'b0; 
@@ -290,9 +346,14 @@ module mem_wb_register (
             mem_wb_f_mem_to_reg <= 1'b0;
             mem_wb_ecall <= 1'b0;
         end else if (riscv_start && !riscv_done) begin
-            if (stall) begin
+            if (flush) begin
+                mem_wb_reg_write <= 1'b0;
+                mem_wb_rob_valid <= 1'b0;
+                mem_wb_f_reg_write <= 1'b0;
+                mem_wb_ecall <= 1'b0;
+            end else if (stall) begin
                 // Đóng băng
-            end else if (flush) begin
+            end else if (1'b0) begin
                 mem_wb_reg_write <= 1'b0;
                 mem_wb_rob_valid <= 1'b0;
                 mem_wb_f_reg_write <= 1'b0;

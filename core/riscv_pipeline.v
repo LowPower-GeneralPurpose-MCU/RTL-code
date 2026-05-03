@@ -824,7 +824,7 @@ module riscv_pipeline #(
 
     // 3. TẦNG EX/MEM
     wire stall_ex_mem = dcache_stall | stall_MEM;
-    wire flush_ex_mem = flush_trap | mf_alu_stall_any;
+    wire flush_ex_mem = flush_trap | flush_branch | mf_alu_stall_any;
 
     // 4. TẦNG MEM/WB
     wire stall_mem_wb = dcache_stall | stall_WB;

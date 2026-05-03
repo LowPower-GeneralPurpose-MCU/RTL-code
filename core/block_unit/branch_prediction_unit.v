@@ -8,7 +8,7 @@ module branch_prediction_unit (
     output [31:0] predict_target
 );
     assign actual_taken = ex_mem_branch && ex_mem_branch_taken;
-    assign bpu_correct = (ex_mem_predict_taken == actual_taken);
+    assign bpu_correct = !ex_mem_branch || (ex_mem_predict_taken == actual_taken);
     wire [1:0] update_btb = stall ? 2'b00 : 
                             ((!ex_mem_btb_hit && ex_mem_branch && actual_taken) || 
                             (ex_mem_btb_hit && ex_mem_branch && !ex_mem_predict_taken && actual_taken)) ? 2'b01 :

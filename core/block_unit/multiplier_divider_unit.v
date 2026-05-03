@@ -1,6 +1,8 @@
 //==================================================================================================
 // File: multiplier_divider_unit.v
 //==================================================================================================
+`timescale 1ns / 1ps
+
 module multiplier (
     input clk,
     input reset_n,
@@ -148,6 +150,13 @@ module multiplier (
             STATE_BUSY: begin
                 md_alu_stall_next = 1'b1;
                 
+                if (!mul_inst_w) begin
+                    md_alu_stall_next = 1'b0;
+                    md_alu_done_next = 1'b0;
+                    state_next = STATE_IDLE;
+                    product_next = 64'b0;
+                    counter_next = 6'b0;
+                end else begin
                 prod_temp = product;
                 mcand_temp = multiplicand;
                 mplier_temp = multiplier;
@@ -209,6 +218,7 @@ module multiplier (
                         end
                     endcase
                 end
+                end
             end
 
             STATE_DONE: begin
@@ -219,7 +229,6 @@ module multiplier (
                 // Chỉ thoát khi ID/EX nhả lệnh
                 if (!stall_id_ex) begin
                     state_next = STATE_IDLE;
-                    md_alu_done_next = 1'b0;
                 end else begin
                     state_next = STATE_DONE;
                 end
