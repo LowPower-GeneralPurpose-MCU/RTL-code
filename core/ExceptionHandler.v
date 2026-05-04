@@ -1,26 +1,4 @@
 `timescale 1ns/1ps
-// ============================================================
-//  exception_handler.v  —  Precise Exception & Flush Controller
-//
-//  BUG ĐÃ SỬA:
-//    [Bug 7] flush_immediate và flush_pc_immediate được tính toán
-//    (tốn logic) nhưng không kết nối ra port nào và không dùng
-//    nội bộ → dead code hoàn toàn. Synthesis tool optimize away,
-//    nhưng lint tool sẽ cảnh báo "signal assigned but never read".
-//    Quan trọng hơn: ý định của code là cung cấp fast flush path
-//    (bypass registered output) cho các stage cần phản hồi ngay
-//    mà không thể chờ 1 cycle. Bỏ đi sẽ mất tính năng này.
-//
-//    Sửa: expose chúng thành output wire port:
-//      flush_early_o    — combinational, dùng cho critical flush paths
-//      flush_pc_early_o — combinational PC tương ứng
-//
-//    Sự khác biệt giữa hai cặp output:
-//      flush_o / flush_pc_o      : registered (1 cycle trễ), ổn định hơn
-//      flush_early_o / flush_pc_early_o : combinational, phản hồi ngay
-//
-//    Top-level kết nối flush_early_o tới các sub-module cần fast flush.
-// ============================================================
 
 module exception_handler #(
     parameter PC_W    = 64,

@@ -1313,6 +1313,7 @@ module tomasulo_backend_2way #(
     parameter PHYS_REGS = 64,
     parameter ARCH_REGS = 32,
     parameter IQ_ENTRIES = 16,
+    parameter LSQ_ENTRIES = 8,
     parameter DATA_W = 32,
     parameter N_DISPATCH = 2,
     parameter N_COMMIT = 2,
@@ -1473,7 +1474,7 @@ module tomasulo_backend_2way #(
 
     wire [N_COMMIT-1:0] free_valid_w;
     wire [N_COMMIT*PHYS_AW-1:0] free_phys_w;
-    wire [PTR_W-1:0] free_count_unused_w;
+    wire [PHYS_AW:0] free_count_unused_w;
 
     tomasulo_free_list #(
         .PHYS_REGS(PHYS_REGS),
@@ -1631,34 +1632,12 @@ module tomasulo_backend_2way #(
         end
     end
 
-    wire [ROB_DEPTH*PHYS_AW-1:0] old_phys_by_rob_flat_w;
-    genvar old_flat_gen;
-    generate
-        for (old_flat_gen = 0; old_flat_gen < ROB_DEPTH; old_flat_gen = old_flat_gen + 1) begin : old_phys_flat_gen
-            assign old_phys_by_rob_flat_w[old_flat_gen*PHYS_AW +: PHYS_AW] =
-                old_phys_by_rob[old_flat_gen];
-        end
-    endgenerate
-
-    genvar old_cmp_gen;
     generate
         for (nd = 0; nd < N_COMMIT; nd = nd + 1) begin : free_old_gen
             wire [ROB_TAG_W-1:0] ctag =
                 commit_head_r[ROB_TAG_W-1:0] + nd[ROB_TAG_W-1:0];
-            wire [ROB_DEPTH-1:0] ctag_onehot_w;
-            for (old_cmp_gen = 0; old_cmp_gen < ROB_DEPTH; old_cmp_gen = old_cmp_gen + 1) begin : ctag_decode_gen
-                assign ctag_onehot_w[old_cmp_gen] =
-                    (ctag == old_cmp_gen[ROB_TAG_W-1:0]);
-            end
             assign free_valid_w[nd] = commit_valid_o[nd] && commit_rd_valid_o[nd];
-            tomasulo_onehot_mux #(
-                .WIDTH(ROB_DEPTH),
-                .DATA_W(PHYS_AW)
-            ) u_free_phys_mux (
-                .sel_i(ctag_onehot_w),
-                .data_i(old_phys_by_rob_flat_w),
-                .data_o(free_phys_w[nd*PHYS_AW +: PHYS_AW])
-            );
+            assign free_phys_w[nd*PHYS_AW +: PHYS_AW] = old_phys_by_rob[ctag];
         end
     endgenerate
 
@@ -1679,7 +1658,7 @@ module tomasulo_backend_2way #(
     wire lsq_empty_w;
 
     tomasulo_lsq_conservative #(
-        .ENTRIES(8),
+        .ENTRIES(LSQ_ENTRIES),
         .DATA_W(DATA_W),
         .PHYS_REGS(PHYS_REGS),
         .ROB_DEPTH(ROB_DEPTH),

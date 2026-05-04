@@ -1,6 +1,102 @@
 //==================================================================================================
 // File: pipeline_stage.v
 //==================================================================================================
+module riscv_c_decompressor (
+    input wire [15:0] instr16,
+    output reg [31:0] instr32
+);
+    localparam [31:0] NOP32 = 32'h00000013;
+
+    function automatic [31:0] enc_r;
+        input [6:0] funct7;
+        input [4:0] rs2;
+        input [4:0] rs1;
+        input [2:0] funct3;
+        input [4:0] rd;
+        input [6:0] opcode;
+        begin
+            enc_r = {funct7, rs2, rs1, funct3, rd, opcode};
+        end
+    endfunction
+
+    function automatic [31:0] enc_i;
+        input [11:0] imm;
+        input [4:0] rs1;
+        input [2:0] funct3;
+        input [4:0] rd;
+        input [6:0] opcode;
+        begin
+            enc_i = {imm, rs1, funct3, rd, opcode};
+        end
+    endfunction
+
+    function automatic [31:0] enc_s;
+        input [11:0] imm;
+        input [4:0] rs2;
+        input [4:0] rs1;
+        input [2:0] funct3;
+        begin
+            enc_s = {imm[11:5], rs2, rs1, funct3, imm[4:0], 7'b0100011};
+        end
+    endfunction
+
+    wire [1:0] quadrant = instr16[1:0];
+    wire [2:0] funct3_c = instr16[15:13];
+    wire [4:0] crd      = instr16[11:7];
+    wire [4:0] crs2     = instr16[6:2];
+    wire [4:0] crd_p    = {2'b01, instr16[4:2]};
+    wire [4:0] crs1_p   = {2'b01, instr16[9:7]};
+    wire [11:0] ci_imm  = {{6{instr16[12]}}, instr16[12], instr16[6:2]};
+    wire [11:0] cl_imm  = {5'b00000, instr16[5], instr16[12:10], instr16[6], 2'b00};
+    wire [11:0] lwsp_imm = {4'b0000, instr16[3:2], instr16[12], instr16[6:4], 2'b00};
+    wire [11:0] swsp_imm = {4'b0000, instr16[8:7], instr16[12:9], 2'b00};
+    wire [11:0] shamt_imm = {7'b0000000, instr16[6:2]};
+
+    always @(*) begin
+        instr32 = NOP32;
+
+        case (quadrant)
+            2'b00: begin
+                case (funct3_c)
+                    3'b010: instr32 = enc_i(cl_imm, crs1_p, 3'b010, crd_p, 7'b0000011); // C.LW
+                    3'b110: instr32 = enc_s(cl_imm, crd_p, crs1_p, 3'b010);             // C.SW
+                    default: instr32 = NOP32;
+                endcase
+            end
+
+            2'b01: begin
+                case (funct3_c)
+                    3'b000: instr32 = enc_i(ci_imm, crd, 3'b000, crd, 7'b0010011);      // C.ADDI/C.NOP
+                    3'b010: instr32 = enc_i(ci_imm, 5'd0, 3'b000, crd, 7'b0010011);     // C.LI
+                    default: instr32 = NOP32;
+                endcase
+            end
+
+            2'b10: begin
+                case (funct3_c)
+                    3'b000: instr32 = enc_i(shamt_imm, crd, 3'b001, crd, 7'b0010011);   // C.SLLI
+                    3'b010: instr32 = (crd != 5'd0) ?
+                                      enc_i(lwsp_imm, 5'd2, 3'b010, crd, 7'b0000011) :
+                                      NOP32;                                            // C.LWSP
+                    3'b100: begin
+                        if (instr16[12] && (crd != 5'd0) && (crs2 != 5'd0)) begin
+                            instr32 = enc_r(7'b0000000, crs2, crd, 3'b000, crd, 7'b0110011); // C.ADD
+                        end else if (!instr16[12] && (crd != 5'd0) && (crs2 != 5'd0)) begin
+                            instr32 = enc_r(7'b0000000, crs2, 5'd0, 3'b000, crd, 7'b0110011); // C.MV
+                        end else begin
+                            instr32 = NOP32;
+                        end
+                    end
+                    3'b110: instr32 = enc_s(swsp_imm, crs2, 5'd2, 3'b010);             // C.SWSP
+                    default: instr32 = NOP32;
+                endcase
+            end
+
+            default: instr32 = NOP32;
+        endcase
+    end
+endmodule
+
 module instruction_fetch (
     input wire reset_n,
     input wire flush_temp, 
@@ -36,6 +132,17 @@ module instruction_fetch (
     input wire [31:0] icache_read_data_lane1
 );
 
+    wire [15:0] instr0_half = pc_in[1] ? icache_read_data[31:16] : icache_read_data[15:0];
+    wire        instr0_compressed = (instr0_half[1:0] != 2'b11);
+    wire [31:0] instr0_expanded;
+    wire [31:0] seq_pc = pc_in + (instr0_compressed ? 32'd2 :
+                                  (fetch_two_valid ? 32'd8 : 32'd4));
+
+    riscv_c_decompressor C_DEC0 (
+        .instr16(instr0_half),
+        .instr32(instr0_expanded)
+    );
+
     always @(*) begin
         if (!reset_n) begin
             pc_out = reset_vector_in;
@@ -54,7 +161,7 @@ module instruction_fetch (
         end else if (btb_hit && predict_taken) begin
             pc_out = predict_target;
         end else if (!flush_temp) begin
-            pc_out = fetch_two_valid ? (pc_in + 32'd8) : (pc_in + 32'd4);
+            pc_out = seq_pc;
         end else begin
             pc_out = pc_in;
         end
@@ -64,9 +171,9 @@ module instruction_fetch (
     assign icache_read_req_lane1 = 1'b1;
     assign icache_addr = pc_in;
     assign icache_addr_lane1 = pc_in + 32'd4;
-    assign instr = icache_read_data;
-    assign instr_lane1 = icache_read_data_lane1;
-    assign pc_plus_4 = pc_in + 32'd4;
+    assign instr = instr0_compressed ? instr0_expanded : icache_read_data;
+    assign instr_lane1 = instr0_compressed ? 32'h00000013 : icache_read_data_lane1;
+    assign pc_plus_4 = pc_in + (instr0_compressed ? 32'd2 : 32'd4);
     assign pc_plus_8 = pc_in + 32'd8;
 
 endmodule
@@ -143,8 +250,8 @@ module instruction_decode (
     wire [31:0] j_imm_ext = {{11{j_imm[19]}}, j_imm, 1'b0};
     
     assign ext_imm = (opcode == 7'b0110111 || opcode == 7'b0010111) ? u_imm_ext :
-                     (opcode == 7'b0000011 || opcode == 7'b0010011 || opcode == 7'b1100111 || opcode == 7'b0000111) ? i_imm_ext :
-                     (opcode == 7'b0100011 || opcode == 7'b0100111) ? s_imm_ext :
+                     (opcode == 7'b0000011 || opcode == 7'b0010011 || opcode == 7'b1100111) ? i_imm_ext :
+                     (opcode == 7'b0100011) ? s_imm_ext :
                      (opcode == 7'b1100011) ? b_imm_ext :
                      (opcode == 7'b1101111) ? j_imm_ext :
                      32'b0;
@@ -390,6 +497,7 @@ endmodule
 module memory_access (
     input [31:0] ex_mem_alu_result,
     input [31:0] ex_mem_mem_write_data,
+    input [31:0] ex_mem_instr,
     input ex_mem_mem_write,
     input ex_mem_mem_read,
     output [31:0] mem_read_data,
@@ -400,11 +508,35 @@ module memory_access (
     input [31:0] dcache_read_data
 );
 
+    wire        ex_mem_atomic = (ex_mem_instr[6:0] == 7'b0101111);
+    wire [4:0]  amo_op = ex_mem_instr[31:27];
+    wire        amo_sc = ex_mem_atomic && (amo_op == 5'b00011);
+    reg [31:0]  amo_write_data;
+
+    always @(*) begin
+        case (amo_op)
+            5'b00000: amo_write_data = dcache_read_data + ex_mem_mem_write_data; // AMOADD.W
+            5'b00001: amo_write_data = ex_mem_mem_write_data;                    // AMOSWAP.W
+            5'b00100: amo_write_data = dcache_read_data ^ ex_mem_mem_write_data; // AMOXOR.W
+            5'b01100: amo_write_data = dcache_read_data & ex_mem_mem_write_data; // AMOAND.W
+            5'b01000: amo_write_data = dcache_read_data | ex_mem_mem_write_data; // AMOOR.W
+            5'b10000: amo_write_data = ($signed(dcache_read_data) < $signed(ex_mem_mem_write_data)) ?
+                                       dcache_read_data : ex_mem_mem_write_data;  // AMOMIN.W
+            5'b10100: amo_write_data = ($signed(dcache_read_data) > $signed(ex_mem_mem_write_data)) ?
+                                       dcache_read_data : ex_mem_mem_write_data;  // AMOMAX.W
+            5'b11000: amo_write_data = (dcache_read_data < ex_mem_mem_write_data) ?
+                                       dcache_read_data : ex_mem_mem_write_data;  // AMOMINU.W
+            5'b11100: amo_write_data = (dcache_read_data > ex_mem_mem_write_data) ?
+                                       dcache_read_data : ex_mem_mem_write_data;  // AMOMAXU.W
+            default:  amo_write_data = ex_mem_mem_write_data;                    // SC.W write data
+        endcase
+    end
+
     assign dcache_read_req = ex_mem_mem_read;
     assign dcache_write_req = ex_mem_mem_write;
     assign dcache_addr = ex_mem_alu_result;
-    assign dcache_write_data = ex_mem_mem_write_data;
-    assign mem_read_data = dcache_read_data;
+    assign dcache_write_data = ex_mem_atomic ? amo_write_data : ex_mem_mem_write_data;
+    assign mem_read_data = amo_sc ? 32'd0 : dcache_read_data;
     
 endmodule
 

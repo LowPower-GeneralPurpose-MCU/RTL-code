@@ -339,6 +339,11 @@ module riscv_pipeline #(
     wire        legacy_lane0_dcache_write_req;
     wire [31:0] legacy_lane0_dcache_addr;
     wire [31:0] legacy_lane0_dcache_write_data;
+    wire        legacy_lane1_dcache_read_req;
+    wire        legacy_lane1_dcache_write_req;
+    wire [31:0] legacy_lane1_dcache_addr;
+    wire [31:0] legacy_lane1_dcache_write_data;
+    wire [31:0] legacy_lane1_mem_read_data_raw;
     wire        legacy_dcache_read_req;
     wire        legacy_dcache_write_req;
     wire [31:0] legacy_dcache_addr;
@@ -419,8 +424,8 @@ module riscv_pipeline #(
     // =========================================================================
     // SUPERSCALAR ROB INTEGRATION
     // =========================================================================
-    localparam ROB_DEPTH      = 64;
-    localparam ROB_TAG_W      = 6;
+    localparam ROB_DEPTH      = 16;
+    localparam ROB_TAG_W      = $clog2(ROB_DEPTH);
     localparam ROB_N_DISPATCH = 2;
     localparam ROB_N_COMMIT   = 2;
     localparam ROB_N_CDB      = 2;
@@ -546,8 +551,7 @@ module riscv_pipeline #(
             op = inst[6:0];
             inst_is_mem = (op == 7'b0000011) || // LOAD
                           (op == 7'b0100011) || // STORE
-                          (op == 7'b0000111) || // LOAD-FP
-                          (op == 7'b0100111);   // STORE-FP
+                          (op == 7'b0101111);   // AMO/LR/SC
         end
     endfunction
 
@@ -575,16 +579,10 @@ module riscv_pipeline #(
                                      (op == 7'b0010111) || // AUIPC
                                      (op == 7'b0000011) || // LOAD
                                      (op == 7'b0100011) || // STORE
+                                     (op == 7'b0101111) || // AMO/LR/SC
                                      (op == 7'b1100011) || // BRANCH
                                      (op == 7'b1100111) || // JALR
                                      (op == 7'b1101111) || // JAL
-                                     (op == 7'b0000111) || // LOAD-FP
-                                     (op == 7'b0100111) || // STORE-FP
-                                     (op == 7'b1010011) || // OP-FP
-                                     (op == 7'b1000011) ||
-                                     (op == 7'b1000111) ||
-                                     (op == 7'b1001011) ||
-                                     (op == 7'b1001111) ||
                                      inst_is_csr(inst));
         end
     endfunction
@@ -599,6 +597,7 @@ module riscv_pipeline #(
                              (op == 7'b0110111) ||
                              (op == 7'b0010111) ||
                              (op == 7'b0000011) ||
+                             (op == 7'b0101111) ||
                              (op == 7'b1100111) ||
                              (op == 7'b1101111) ||
                              inst_is_csr(inst);
@@ -616,8 +615,7 @@ module riscv_pipeline #(
                             (op == 7'b0100011) ||
                             (op == 7'b1100011) ||
                             (op == 7'b1100111) ||
-                            (op == 7'b0000111) ||
-                            (op == 7'b0100111) ||
+                            (op == 7'b0101111) ||
                             (inst_is_csr(inst) && !inst[14]);
         end
     endfunction
@@ -629,7 +627,8 @@ module riscv_pipeline #(
             op = inst[6:0];
             inst_uses_rs2 = (op == 7'b0110011) ||
                             (op == 7'b0100011) ||
-                            (op == 7'b1100011);
+                            (op == 7'b1100011) ||
+                            (op == 7'b0101111);
         end
     endfunction
 
@@ -899,9 +898,6 @@ module riscv_pipeline #(
                                    ex_mem_mem_write_data_lane1;
     wire legacy_lane0_mem_req =
         legacy_lane0_dcache_read_req | legacy_lane0_dcache_write_req;
-    wire legacy_lane1_dcache_read_req = ex_mem_mem_read_lane1;
-    wire legacy_lane1_dcache_write_req =
-        ex_mem_mem_write_lane1 | ex_mem_f_mem_write_lane1;
     wire legacy_lane1_mem_req =
         legacy_lane1_dcache_read_req | legacy_lane1_dcache_write_req;
     wire legacy_lane1_dcache_grant =
@@ -914,10 +910,10 @@ module riscv_pipeline #(
         legacy_lane0_dcache_write_req |
         (legacy_lane1_dcache_grant & legacy_lane1_dcache_write_req);
     assign legacy_dcache_addr =
-        legacy_lane1_dcache_grant ? ex_mem_alu_result_lane1 :
+        legacy_lane1_dcache_grant ? legacy_lane1_dcache_addr :
                                     legacy_lane0_dcache_addr;
     assign legacy_dcache_write_data =
-        legacy_lane1_dcache_grant ? final_mem_write_data_lane1 :
+        legacy_lane1_dcache_grant ? legacy_lane1_dcache_write_data :
                                     legacy_lane0_dcache_write_data;
     assign legacy_dcache_mem_size =
         legacy_lane1_dcache_grant ? ex_mem_mem_size_lane1 : ex_mem_mem_size;
@@ -925,7 +921,7 @@ module riscv_pipeline #(
         legacy_lane1_dcache_grant ? ex_mem_mem_unsigned_lane1 :
                                     ex_mem_mem_unsigned;
     assign mem_read_data_lane1 =
-        legacy_lane1_dcache_grant ? dcache_read_data : 32'd0;
+        legacy_lane1_dcache_grant ? legacy_lane1_mem_read_data_raw : 32'd0;
 
     assign ooo_dcache_active = ooo_dcache_read_req | ooo_dcache_write_req;
     assign dcache_read_req = ooo_dcache_read_req | legacy_dcache_read_req;
@@ -1118,7 +1114,7 @@ module riscv_pipeline #(
     // Phân rã theo tiền tố (Prefix) của chuẩn Abstract Command
     wire is_csr   = (dbg_reg_read_addr[15:12] == 4'h0); // Dải 0x0000 - 0x0FFF
     wire is_gpr   = (dbg_reg_read_addr[15:5]  == 11'h080); // Dải 0x1000 - 0x101F
-    wire is_fpr   = (dbg_reg_read_addr[15:5]  == 11'h081); // Dải 0x1020 - 0x103F
+    wire is_fpr   = 1'b0; // RV32IMAC build: FPR debug window is disabled.
 
     // Chỉ sinh tín hiệu write_en khi địa chỉ map đúng khu vực
     wire dbg_gpr_we = dbg_reg_write_en & is_gpr;
@@ -1253,47 +1249,16 @@ module riscv_pipeline #(
     // =========================================================================
     // FLOATING POINT REGISTER FILE
     // =========================================================================
-    f_register_file F_RF (
-        .clk(clk),
-        .reset_n(reset_n),
-        .read_reg1(rs1),
-        .read_reg2(rs2),
-        .read_reg1_lane1(rs1_lane1),
-        .read_reg2_lane1(rs2_lane1),
-        .read_data1(read_f_data1_temp),
-        .read_data2(read_f_data2_temp),
-        .read_data1_lane1(read_f_data1_temp_lane1),
-        .read_data2_lane1(read_f_data2_temp_lane1),
-        .reg_write_en(mem_wb_f_reg_write),
-        .write_reg(mem_wb_rd),
-        .write_data(wb_f_write_data),
-        .reg_write_en_lane1(mem_wb_f_reg_write_lane1),
-        .write_reg_lane1(mem_wb_rd_lane1),
-        .write_data_lane1(wb_f_write_data_lane1),
-        
-        // --- THÊM KẾT NỐI DEBUG ---
-        .dbg_mode(dbg_halted),
-        .dbg_read_addr(dbg_reg_read_addr[4:0]),
-        .dbg_read_data(frf_dbg_read_data),
-        .dbg_write_en(dbg_fpr_we),
-        .dbg_write_addr(dbg_reg_write_addr[4:0]),
-        .dbg_write_data(dbg_reg_write_data)
-    );
-    assign read_f_data1 = (rs1 == mem_wb_rd && mem_wb_f_reg_write) ? wb_f_write_data : read_f_data1_temp;
-    assign read_f_data2 = (rs2 == mem_wb_rd && mem_wb_f_reg_write) ? wb_f_write_data : read_f_data2_temp;
-    assign read_f_data1_lane1 =
-        (rs1_lane1 == mem_wb_rd_lane1 && mem_wb_f_reg_write_lane1) ? wb_f_write_data_lane1 :
-        (rs1_lane1 == mem_wb_rd && mem_wb_f_reg_write) ? wb_f_write_data :
-        read_f_data1_temp_lane1;
-    assign read_f_data2_lane1 =
-        (rs2_lane1 == mem_wb_rd_lane1 && mem_wb_f_reg_write_lane1) ? wb_f_write_data_lane1 :
-        (rs2_lane1 == mem_wb_rd && mem_wb_f_reg_write) ? wb_f_write_data :
-        read_f_data2_temp_lane1;
+    assign frf_dbg_read_data = 32'd0;
+    assign read_f_data1 = 32'd0;
+    assign read_f_data2 = 32'd0;
+    assign read_f_data1_lane1 = 32'd0;
+    assign read_f_data2_lane1 = 32'd0;
 
     // =========================================================================
     // ID/EX REGISTER
     // =========================================================================
-    id_ex_register ID_EX (
+    id_ex_register #(.ROB_TAG_W(ROB_TAG_W)) ID_EX (
         .clk(clk),
         .reset_n(reset_n),
         .stall(stall_id_ex), 
@@ -1394,7 +1359,7 @@ module riscv_pipeline #(
         .id_ex_rob_valid(id_ex_rob_valid)
     );
 
-    id_ex_register ID_EX_LANE1 (
+    id_ex_register #(.ROB_TAG_W(ROB_TAG_W)) ID_EX_LANE1 (
         .clk(clk),
         .reset_n(reset_n),
         .stall(stall_id_ex), 
@@ -1575,7 +1540,9 @@ module riscv_pipeline #(
     // =========================================================================
     // EXECUTE STAGE (EX)
     // =========================================================================
-    execute EX (
+    execute #(
+        .ENABLE_FPU(0)
+    ) EX (
         .clk(clk),
         .reset_n(reset_n),
         .stall_id_ex(stall_id_ex),
@@ -1608,7 +1575,9 @@ module riscv_pipeline #(
         .fpu_result_out(fpu_result_out)
     );
 
-    execute EX_LANE1 (
+    execute #(
+        .ENABLE_FPU(0)
+    ) EX_LANE1 (
         .clk(clk),
         .reset_n(reset_n),
         .stall_id_ex(stall_id_ex),
@@ -1644,7 +1613,7 @@ module riscv_pipeline #(
     // =========================================================================
     // EX/MEM REGISTER
     // =========================================================================
-    ex_mem_register EX_MEM (
+    ex_mem_register #(.ROB_TAG_W(ROB_TAG_W)) EX_MEM (
         .clk(clk),
         .reset_n(reset_n),
         .stall(stall_ex_mem), 
@@ -1719,7 +1688,7 @@ module riscv_pipeline #(
         .ex_mem_rob_valid(ex_mem_rob_valid)
     );
 
-    ex_mem_register EX_MEM_LANE1 (
+    ex_mem_register #(.ROB_TAG_W(ROB_TAG_W)) EX_MEM_LANE1 (
         .clk(clk),
         .reset_n(reset_n),
         .stall(stall_ex_mem), 
@@ -1800,6 +1769,7 @@ module riscv_pipeline #(
     memory_access MEM (
         .ex_mem_alu_result(ex_mem_alu_result),
         .ex_mem_mem_write_data(final_mem_write_data),
+        .ex_mem_instr(ex_mem_instr),
         .ex_mem_mem_write(ex_mem_mem_write | ex_mem_f_mem_write),
         .ex_mem_mem_read(ex_mem_mem_read),
         .mem_read_data(mem_read_data),
@@ -1810,10 +1780,24 @@ module riscv_pipeline #(
         .dcache_read_data(dcache_read_data)
     );
 
+    memory_access MEM_LANE1 (
+        .ex_mem_alu_result(ex_mem_alu_result_lane1),
+        .ex_mem_mem_write_data(final_mem_write_data_lane1),
+        .ex_mem_instr(ex_mem_instr_lane1),
+        .ex_mem_mem_write(ex_mem_mem_write_lane1 | ex_mem_f_mem_write_lane1),
+        .ex_mem_mem_read(ex_mem_mem_read_lane1),
+        .mem_read_data(legacy_lane1_mem_read_data_raw),
+        .dcache_read_req(legacy_lane1_dcache_read_req),
+        .dcache_write_req(legacy_lane1_dcache_write_req),
+        .dcache_addr(legacy_lane1_dcache_addr),
+        .dcache_write_data(legacy_lane1_dcache_write_data),
+        .dcache_read_data(dcache_read_data)
+    );
+
     // =========================================================================
     // MEM/WB REGISTER
     // =========================================================================
-    mem_wb_register MEM_WB (
+    mem_wb_register #(.ROB_TAG_W(ROB_TAG_W)) MEM_WB (
         .clk(clk),
         .reset_n(reset_n),
         .stall(stall_mem_wb), 
@@ -1848,7 +1832,7 @@ module riscv_pipeline #(
         .mem_wb_rob_valid(mem_wb_rob_valid)
     );
 
-    mem_wb_register MEM_WB_LANE1 (
+    mem_wb_register #(.ROB_TAG_W(ROB_TAG_W)) MEM_WB_LANE1 (
         .clk(clk),
         .reset_n(reset_n),
         .stall(stall_mem_wb), 
@@ -1927,7 +1911,8 @@ module riscv_pipeline #(
         .ROB_DEPTH  (ROB_DEPTH),
         .PHYS_REGS  (64),
         .ARCH_REGS  (32),
-        .IQ_ENTRIES (16),
+        .IQ_ENTRIES (4),
+        .LSQ_ENTRIES(4),
         .DATA_W     (32),
         .N_DISPATCH (ROB_N_DISPATCH),
         .N_COMMIT   (ROB_N_COMMIT),

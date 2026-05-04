@@ -43,10 +43,6 @@ module rob_ptr_manager_superscalar #(
             if (commit_count_i != {CNTW{1'b0}} &&
                 current_count >= {{(PTRW-CNTW){1'b0}}, commit_count_i})
                 head_r <= head_next;
-
-            // Dispatch: advance tail
-            // Use adjusted_free_o-based check in top-level, not full_o.
-            // Here we still guard with available_slots (pre-commit value).
             if (dispatch_count_i != {DISPW{1'b0}} &&
                 effective_free_slots >= {{(PTRW-DISPW){1'b0}}, dispatch_count_i})
                 tail_r <= tail_next;
@@ -60,8 +56,6 @@ module rob_ptr_manager_superscalar #(
     assign tail_o   = tail_r[IDX_W-1:0];
     assign count_o  = current_count;
 
-    // [Issue 8] adjusted_free: how many slots are actually usable this cycle,
-    // counting both currently empty slots AND slots freed by same-cycle commits.
     assign adjusted_free_o = effective_free_slots;
 
 endmodule

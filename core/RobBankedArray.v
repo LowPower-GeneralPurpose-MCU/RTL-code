@@ -1,7 +1,5 @@
 `timescale 1ns/1ps
 
-`timescale 1ns/1ps
-
 module rob_banked_array #(
     parameter ROB_DEPTH       = 64,
     parameter DATA_W          = 64,

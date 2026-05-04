@@ -1,20 +1,5 @@
 `timescale 1ns/1ps
-// ============================================================
-//  rob_state_onehot.v  —  One-Hot State Bit-Plane Array
-//  Standard: IEEE 1364-2001 (Verilog-2001)
-//
-//  THAY ĐỔI v2:
-//  [Issue 5] Dynamic wire-array indexing trong always @(*):
-//    Code cũ dùng integer loop variable để đọc wire array:
-//      for (d=0; d<N; d++) all |= mask_array[d];  ← 'mask_array[d]'
-//    Synopsys DC strict Verilog-2001: lỗi "variable index into net array".
-//    Sửa: thay bằng genvar accumulator OR-tree (tất cả index là constant).
-//      wire partial[0] = 0;
-//      for (k=0..N-1) assign partial[k+1] = partial[k] | mask[k];
-//      wire result = partial[N];
-//    Áp dụng cho cả 3 mask: dispatch, cdb, commit.
-//    Xóa hoàn toàn các integer d, c, m và always @(*) reductions.
-// ============================================================
+
 
 module rob_state_onehot #(
     parameter ROB_DEPTH  = 64,
@@ -80,17 +65,7 @@ module rob_state_onehot #(
         end
     endgenerate
 
-    // =========================================================
-    // OR-Reduction Trees  [Issue 5 fix]
-    //
-    // Genvar accumulator pattern:
-    //   partial[0]   = 0
-    //   partial[k+1] = partial[k] | mask[k]
-    //   result       = partial[N]
-    //
-    // Every index is a compile-time genvar → no dynamic indexing,
-    // no integer variables, no always block needed. Verilog-2001 clean.
-    // =========================================================
+
     wire [ROB_DEPTH-1:0] disp_partial   [0:N_DISPATCH];
     wire [ROB_DEPTH-1:0] cdb_partial    [0:N_CDB];
     wire [ROB_DEPTH-1:0] commit_partial [0:N_COMMIT];

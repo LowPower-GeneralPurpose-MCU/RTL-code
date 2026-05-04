@@ -30,13 +30,7 @@ module rob_commit_scanner #(
     integer j_v;
     reg [CNT_W-1:0] cnt_v;
 
-    // =========================================================
-    // Fully Combinational Chain Resolution
-    //
-    // Each slot j reads commit_ready_o[j-1] computed in the SAME
-    // always @(*) evaluation pass → correct current-cycle chain.
-    // Blocking assignment (=) ensures values propagate within the block.
-    // =========================================================
+
     always @(*) begin
         commit_ready_o = {N_COMMIT{1'b0}};
         commit_count_o = {CNT_W{1'b0}};
