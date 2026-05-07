@@ -1,7 +1,6 @@
 //==================================================================================================
 // File: pipeline_register.v
 //==================================================================================================
-`timescale 1ns / 1ps
 
 module if_id_register (
     input clk, reset_n,
@@ -15,7 +14,7 @@ module if_id_register (
     always @(posedge clk or negedge reset_n) begin
         if (!reset_n) begin
             if_id_pc_in <= 32'd0;
-            if_id_instr <= 32'h00000013;
+            if_id_instr <= 32'd0;
             if_id_pc_plus_4 <= 32'd0;
             if_id_predict_taken <= 1'b0;
             if_id_btb_hit <= 1'b0;
@@ -42,8 +41,6 @@ module id_ex_register (
     input clk, reset_n,
     input stall, input flush,
     input riscv_start, input riscv_done,
-    input [5:0] rob_tag,
-    input rob_valid,
     input [31:0] if_id_pc_plus_4, if_id_pc_in,
     input [2:0] funct3,
     input [31:0] read_data1, read_data2, ext_imm,
@@ -83,27 +80,14 @@ module id_ex_register (
     output reg id_ex_fpu_en, id_ex_f_reg_write, id_ex_f_mem_to_reg, id_ex_f_mem_write,
     output reg id_ex_f_to_x, id_ex_x_to_f,
     output reg [4:0] id_ex_fpu_operation,
-    output reg [31:0] id_ex_read_f_data1, id_ex_read_f_data2,
-    output reg [5:0] id_ex_rob_tag,
-    output reg id_ex_rob_valid
+    output reg [31:0] id_ex_read_f_data1, id_ex_read_f_data2
 );
     always @(posedge clk or negedge reset_n) begin
         if (!reset_n) begin
-            id_ex_instr <= 32'h00000013;
-            id_ex_rob_tag <= 6'd0;
-            id_ex_rob_valid <= 1'b0;
-            id_ex_reg_write <= 1'b0; id_ex_alu_src <= 1'b0;
-            id_ex_mem_write <= 1'b0; id_ex_mem_read <= 1'b0; id_ex_mem_to_reg <= 1'b0;
-            id_ex_branch <= 1'b0; id_ex_jal <= 1'b0; id_ex_jalr <= 1'b0;
-            id_ex_lui <= 1'b0; id_ex_auipc <= 1'b0; id_ex_mem_unsigned <= 1'b0;
-            id_ex_mem_size <= 2'b00; id_ex_alu_ctrl <= 4'b0010;
-            id_ex_predict_taken <= 1'b0; id_ex_btb_hit <= 1'b0;
-            id_ex_csr_we <= 1'b0; id_ex_csr_op <= 2'b00;
-            id_ex_md_type <= 1'b0; id_ex_md_operation <= 3'b000;
-            id_ex_fpu_en <= 1'b0; id_ex_f_reg_write <= 1'b0;
-            id_ex_f_mem_to_reg <= 1'b0; id_ex_f_mem_write <= 1'b0;
-            id_ex_f_to_x <= 1'b0; id_ex_x_to_f <= 1'b0;
-            id_ex_fpu_operation <= 5'd0;
+            id_ex_instr <= 32'd0;
+            id_ex_reg_write <= 1'b0; id_ex_mem_write <= 1'b0; id_ex_mem_read <= 1'b0;
+            id_ex_branch <= 1'b0; id_ex_jal <= 1'b0; id_ex_jalr <= 1'b0; id_ex_csr_we <= 1'b0;
+            id_ex_f_reg_write <= 1'b0; id_ex_f_mem_write <= 1'b0;
             id_ex_ecall <= 1'b0; id_ex_mret <= 1'b0; id_ex_ebreak <= 1'b0;
             // (Reset các biến khác nếu cần, nhưng các tín hiệu điều khiển trên là quan trọng nhất)
         end else if (riscv_start && !riscv_done) begin
@@ -144,15 +128,13 @@ module id_ex_register (
             end else if (1'b0) begin
                 // Bơm NOP (Chỉ cần tắt các cờ thay đổi trạng thái hệ thống)
                 id_ex_instr <= 32'h00000013;
-                id_ex_rob_valid <= 1'b0;
                 id_ex_reg_write <= 1'b0;
-                id_ex_alu_src <= 1'b0;
                 id_ex_mem_write <= 1'b0;
                 id_ex_mem_read <= 1'b0;
-                id_ex_mem_to_reg <= 1'b0;
                 id_ex_branch <= 1'b0;
                 id_ex_jal <= 1'b0;
                 id_ex_jalr <= 1'b0;
+<<<<<<< HEAD
                 id_ex_lui <= 1'b0;
                 id_ex_auipc <= 1'b0;
                 id_ex_mem_unsigned <= 1'b0;
@@ -160,24 +142,19 @@ module id_ex_register (
                 id_ex_alu_ctrl <= 4'b0010;
                 id_ex_predict_taken <= 1'b0;
                 id_ex_btb_hit <= 1'b0;
+=======
+>>>>>>> parent of bbc47b3 (update core superscalar 2way)
                 id_ex_ecall <= 1'b0; 
                 id_ex_ebreak <= 1'b0; 
                 id_ex_mret <= 1'b0; 
                 id_ex_csr_we <= 1'b0;
-                id_ex_csr_op <= 2'b00;
-                id_ex_md_type <= 1'b0;
-                id_ex_md_operation <= 3'b000;
-                id_ex_fpu_en <= 1'b0;
                 id_ex_f_reg_write <= 1'b0;
-                id_ex_f_mem_to_reg <= 1'b0;
                 id_ex_f_mem_write <= 1'b0;
                 id_ex_f_to_x <= 1'b0;
                 id_ex_x_to_f <= 1'b0;
             end else begin
                 // Cập nhật bình thường
                 id_ex_pc_plus_4 <= if_id_pc_plus_4; id_ex_pc_in <= if_id_pc_in;
-                id_ex_rob_tag <= rob_tag;
-                id_ex_rob_valid <= rob_valid;
                 id_ex_funct3 <= funct3;
                 id_ex_read_data1 <= read_data1; id_ex_read_data2 <= read_data2;
                 id_ex_ext_imm <= ext_imm; id_ex_branch_target <= branch_target;
@@ -185,7 +162,7 @@ module id_ex_register (
                 id_ex_rs1 <= rs1; id_ex_rs2 <= rs2; id_ex_rd <= rd;
                 id_ex_alu_src <= alu_src; id_ex_mem_write <= mem_write;
                 id_ex_mem_read <= mem_read; id_ex_mem_to_reg <= mem_to_reg;
-                id_ex_reg_write <= reg_write && (rd != 5'd0); id_ex_branch <= branch;
+                id_ex_reg_write <= reg_write; id_ex_branch <= branch;
                 id_ex_jal <= jal; id_ex_jalr <= jalr; id_ex_lui <= lui;
                 id_ex_auipc <= auipc; id_ex_mem_unsigned <= mem_unsigned;
                 id_ex_mem_size <= mem_size; id_ex_alu_ctrl <= alu_ctrl;
@@ -209,8 +186,6 @@ module ex_mem_register (
     input clk, reset_n,
     input stall, input flush,
     input riscv_start, input riscv_done,
-    input [5:0] id_ex_rob_tag,
-    input id_ex_rob_valid,
     input [31:0] alu_result, id_ex_ext_imm,
     input [4:0] id_ex_rd,
     input [31:0] id_ex_pc_plus_4, id_ex_pc_in, id_ex_branch_target,
@@ -235,26 +210,18 @@ module ex_mem_register (
     output reg [1:0] ex_mem_csr_op,
     output reg ex_mem_csr_we,
     output reg [31:0] ex_mem_csr_write_data, ex_mem_instr, ex_mem_fpu_result, ex_mem_f_store_data,
-    output reg ex_mem_f_reg_write, ex_mem_f_mem_to_reg, ex_mem_f_mem_write,
-    output reg [5:0] ex_mem_rob_tag,
-    output reg ex_mem_rob_valid
+    output reg ex_mem_f_reg_write, ex_mem_f_mem_to_reg, ex_mem_f_mem_write
 );
     always @(posedge clk or negedge reset_n) begin
         if (!reset_n) begin
-            ex_mem_instr <= 32'h00000013;
-            ex_mem_rob_tag <= 6'd0;
-            ex_mem_rob_valid <= 1'b0;
+            ex_mem_instr <= 32'd0;
             ex_mem_reg_write <= 1'b0; ex_mem_mem_write <= 1'b0; ex_mem_mem_read <= 1'b0;
-            ex_mem_mem_to_reg <= 1'b0; ex_mem_branch <= 1'b0; ex_mem_branch_taken <= 1'b0;
-            ex_mem_jal <= 1'b0; ex_mem_mem_unsigned <= 1'b0; ex_mem_mem_size <= 2'b00;
-            ex_mem_predict_taken <= 1'b0; ex_mem_btb_hit <= 1'b0;
-            ex_mem_csr_we <= 1'b0; ex_mem_csr_op <= 2'b00;
+            ex_mem_branch <= 1'b0; ex_mem_jal <= 1'b0; ex_mem_csr_we <= 1'b0;
             ex_mem_ecall <= 1'b0; ex_mem_ebreak <= 1'b0; ex_mem_mret <= 1'b0;
-            ex_mem_f_reg_write <= 1'b0; ex_mem_f_mem_to_reg <= 1'b0; ex_mem_f_mem_write <= 1'b0;
+            ex_mem_f_reg_write <= 1'b0; ex_mem_f_mem_write <= 1'b0;
         end else if (riscv_start && !riscv_done) begin
             if (flush) begin
                 ex_mem_instr <= 32'h00000013;
-                ex_mem_rob_valid <= 1'b0;
                 ex_mem_reg_write <= 1'b0;
                 ex_mem_mem_write <= 1'b0;
                 ex_mem_mem_read <= 1'b0;
@@ -292,8 +259,6 @@ module ex_mem_register (
                 ex_mem_f_mem_write <= 1'b0;
             end else begin
                 ex_mem_alu_result <= alu_result; ex_mem_rd <= id_ex_rd;
-                ex_mem_rob_tag <= id_ex_rob_tag;
-                ex_mem_rob_valid <= id_ex_rob_valid;
                 ex_mem_branch_target <= id_ex_branch_target; ex_mem_pc_plus_4 <= id_ex_pc_plus_4;
                 ex_mem_pc_in <= id_ex_pc_in; ex_mem_branch <= id_ex_branch;
                 ex_mem_branch_taken <= branch_taken; ex_mem_jal <= id_ex_jal;
@@ -318,8 +283,6 @@ module mem_wb_register (
     input clk, reset_n,
     input stall, input flush,
     input riscv_start, riscv_done,
-    input [5:0] ex_mem_rob_tag,
-    input ex_mem_rob_valid,
     input [31:0] mem_read_data, ex_mem_pc_plus_4,
     input ex_mem_mem_to_reg, ex_mem_reg_write, ex_mem_jal,
     input [31:0] ex_mem_alu_result,
@@ -331,19 +294,12 @@ module mem_wb_register (
     // Outputs
     output reg [31:0] mem_wb_mem_read_data, mem_wb_pc_plus_4, mem_wb_alu_result, mem_wb_fpu_result,
     output reg mem_wb_mem_to_reg, mem_wb_reg_write, mem_wb_jal, mem_wb_ecall, mem_wb_f_reg_write, mem_wb_f_mem_to_reg,
-    output reg [4:0] mem_wb_rd,
-    output reg [5:0] mem_wb_rob_tag,
-    output reg mem_wb_rob_valid
+    output reg [4:0] mem_wb_rd
 );
     always @(posedge clk or negedge reset_n) begin
         if (!reset_n) begin
-            mem_wb_rob_tag <= 6'd0;
-            mem_wb_rob_valid <= 1'b0;
-            mem_wb_mem_to_reg <= 1'b0;
             mem_wb_reg_write <= 1'b0;
-            mem_wb_jal <= 1'b0;
             mem_wb_f_reg_write <= 1'b0;
-            mem_wb_f_mem_to_reg <= 1'b0;
             mem_wb_ecall <= 1'b0;
         end else if (riscv_start && !riscv_done) begin
             if (flush) begin
@@ -355,13 +311,10 @@ module mem_wb_register (
                 // Đóng băng
             end else if (1'b0) begin
                 mem_wb_reg_write <= 1'b0;
-                mem_wb_rob_valid <= 1'b0;
                 mem_wb_f_reg_write <= 1'b0;
                 mem_wb_ecall <= 1'b0;
             end else begin
                 mem_wb_mem_read_data <= mem_read_data; mem_wb_pc_plus_4 <= ex_mem_pc_plus_4;
-                mem_wb_rob_tag <= ex_mem_rob_tag;
-                mem_wb_rob_valid <= ex_mem_rob_valid;
                 mem_wb_alu_result <= ex_mem_alu_result; mem_wb_rd <= ex_mem_rd;
                 mem_wb_mem_to_reg <= ex_mem_mem_to_reg; mem_wb_reg_write <= ex_mem_reg_write;
                 mem_wb_jal <= ex_mem_jal; mem_wb_ecall <= ex_mem_ecall;
