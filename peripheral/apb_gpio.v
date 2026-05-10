@@ -77,7 +77,7 @@ module apb_gpio #(
 
     // --- Giao tiếp Đọc/Ghi APB ---
     wire apb_write = psel && penable && pwrite;
-    wire apb_read  = psel && !penable && !pwrite;
+    wire apb_read  = psel &&  penable && !pwrite;
 
     always @(posedge pclk or negedge presetn) begin
         if (!presetn) begin
