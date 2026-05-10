@@ -20,7 +20,7 @@ module axi_apb_dma (
     input  wire         s_apb_psel,
     input  wire         s_apb_penable,
     input  wire         s_apb_pwrite,
-    input  wire [12:0]  s_apb_paddr,   // 13-bit: 4 kênh × 0x1000
+    input  wire [13:0]  s_apb_paddr,   // 14-bit: 4 kênh × 0x1000
     input  wire [31:0]  s_apb_pwdata,
     output wire [31:0]  s_apb_prdata,
     output wire         s_apb_pslverr,
@@ -66,6 +66,9 @@ module axi_apb_dma (
     output wire         m_axi_bready
 );
 
+    assign m_axi_arburst = 2'b01;
+    assign m_axi_awburst = 2'b01;
+
     dma_engine #(
         .N_CH         (4),          // 4 kênh DMA
         .N_CH_W       (2),          // clog2(4) = 2
@@ -100,7 +103,6 @@ module axi_apb_dma (
         .ARADDR       (m_axi_araddr),
         .ARLEN        (m_axi_arlen),
         .ARSIZE       (m_axi_arsize),
-        .ARBURST      (m_axi_arburst),
         .ARID         (m_axi_arid),
         .ARVALID      (m_axi_arvalid),
         .ARREADY      (m_axi_arready),
@@ -113,7 +115,6 @@ module axi_apb_dma (
         .AWADDR       (m_axi_awaddr),
         .AWLEN        (m_axi_awlen),
         .AWSIZE       (m_axi_awsize),
-        .AWBURST      (m_axi_awburst),
         .AWID         (m_axi_awid),
         .AWVALID      (m_axi_awvalid),
         .AWREADY      (m_axi_awready),

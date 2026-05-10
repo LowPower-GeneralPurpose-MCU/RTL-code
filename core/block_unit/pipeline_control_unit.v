@@ -47,13 +47,8 @@ module pipeline_control_unit (
         load_use_hazard = 1'b0;
         if (id_ex_mem_read && (id_ex_rd != 5'd0)) begin
             case (opcode)
-                7'b0110011, 7'b0010011, 7'b0000011, 7'b0100011, 7'b1100011, 7'b1100111: begin
-                    if ((id_ex_rd == rs1) || (id_ex_rd == rs2)) load_use_hazard = 1'b1;
-                end
-                7'b1010011, 7'b1000011, 7'b1000111, 7'b1001011, 7'b1001111: begin
-                    if ((id_ex_rd == rs1) || (id_ex_rd == rs2)) load_use_hazard = 1'b1;
-                end
-                7'b0000111, 7'b0100111: begin
+                7'b0110011, 7'b0010011, 7'b0000011, 7'b0100011,
+                7'b0101111, 7'b1100011, 7'b1100111: begin
                     if ((id_ex_rd == rs1) || (id_ex_rd == rs2)) load_use_hazard = 1'b1;
                 end
             endcase

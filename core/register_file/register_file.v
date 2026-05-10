@@ -7,11 +7,24 @@ module register_file (
     input reset_n,
     input [4:0] read_reg1,
     input [4:0] read_reg2,
+    input [4:0] read_reg1_lane1,
+    input [4:0] read_reg2_lane1,
     input mem_wb_reg_write,
     input [4:0] mem_wb_rd,
     input [31:0] mem_wb_write_data,
+    input mem_wb_reg_write_lane1,
+    input [4:0] mem_wb_rd_lane1,
+    input [31:0] mem_wb_write_data_lane1,
+    input ooo_commit_valid0,
+    input [4:0] ooo_commit_rd0,
+    input [31:0] ooo_commit_data0,
+    input ooo_commit_valid1,
+    input [4:0] ooo_commit_rd1,
+    input [31:0] ooo_commit_data1,
     output [31:0] read_data1,
     output [31:0] read_data2,
+    output [31:0] read_data1_lane1,
+    output [31:0] read_data2_lane1,
     
     // --- DEBUG CHUYÊN DỤNG ---
     input  wire        dbg_mode,           // Báo hiệu CPU đang Halt
@@ -38,11 +51,35 @@ module register_file (
                 end
             end 
             // Nếu không Halt, pipeline hoạt động bình thường
-            else if (mem_wb_reg_write) begin
-                if (mem_wb_rd == 5'd2) begin
-                    x2_sp <= mem_wb_write_data;
-                end else if (mem_wb_rd != 5'd0) begin
-                    rf_main[mem_wb_rd] <= mem_wb_write_data;
+            else begin
+                // Ghi nhiều kết quả commit trong cùng chu kỳ; cổng trẻ hơn nằm sau.
+                if (mem_wb_reg_write) begin
+                    if (mem_wb_rd == 5'd2) begin
+                        x2_sp <= mem_wb_write_data;
+                    end else if (mem_wb_rd != 5'd0) begin
+                        rf_main[mem_wb_rd] <= mem_wb_write_data;
+                    end
+                end
+                if (mem_wb_reg_write_lane1) begin
+                    if (mem_wb_rd_lane1 == 5'd2) begin
+                        x2_sp <= mem_wb_write_data_lane1;
+                    end else if (mem_wb_rd_lane1 != 5'd0) begin
+                        rf_main[mem_wb_rd_lane1] <= mem_wb_write_data_lane1;
+                    end
+                end
+                if (ooo_commit_valid0) begin
+                    if (ooo_commit_rd0 == 5'd2) begin
+                        x2_sp <= ooo_commit_data0;
+                    end else if (ooo_commit_rd0 != 5'd0) begin
+                        rf_main[ooo_commit_rd0] <= ooo_commit_data0;
+                    end
+                end
+                if (ooo_commit_valid1) begin
+                    if (ooo_commit_rd1 == 5'd2) begin
+                        x2_sp <= ooo_commit_data1;
+                    end else if (ooo_commit_rd1 != 5'd0) begin
+                        rf_main[ooo_commit_rd1] <= ooo_commit_data1;
+                    end
                 end
             end
         end
@@ -54,6 +91,12 @@ module register_file (
                         
     assign read_data2 = (read_reg2 == 5'd0) ? 32'd0 :
                         (read_reg2 == 5'd2) ? x2_sp : rf_main[read_reg2];
+
+    assign read_data1_lane1 = (read_reg1_lane1 == 5'd0) ? 32'd0 :
+                              (read_reg1_lane1 == 5'd2) ? x2_sp : rf_main[read_reg1_lane1];
+                        
+    assign read_data2_lane1 = (read_reg2_lane1 == 5'd0) ? 32'd0 :
+                              (read_reg2_lane1 == 5'd2) ? x2_sp : rf_main[read_reg2_lane1];
 
     // Cổng đọc riêng biệt của Debug (Tổ hợp, trả về ngay lập tức)
     assign dbg_read_data = (dbg_read_addr == 5'd0) ? 32'd0 :
@@ -67,11 +110,18 @@ module f_register_file (
     input reset_n,
     input [4:0] read_reg1, 
     input [4:0] read_reg2,
+    input [4:0] read_reg1_lane1,
+    input [4:0] read_reg2_lane1,
     output [31:0] read_data1, 
     output [31:0] read_data2,
+    output [31:0] read_data1_lane1,
+    output [31:0] read_data2_lane1,
     input reg_write_en,   
     input [4:0] write_reg,    
     input [31:0] write_data,
+    input reg_write_en_lane1,
+    input [4:0] write_reg_lane1,
+    input [31:0] write_data_lane1,
     
     // --- BỔ SUNG CỔNG DEBUG CHUYÊN DỤNG ---
     input  wire        dbg_mode,           // Trạng thái CPU đang Halt
@@ -86,6 +136,8 @@ module f_register_file (
     // Đọc cho Pipeline
     assign read_data1 = f_regfile[read_reg1];
     assign read_data2 = f_regfile[read_reg2];
+    assign read_data1_lane1 = f_regfile[read_reg1_lane1];
+    assign read_data2_lane1 = f_regfile[read_reg2_lane1];
     
     // Đọc cho Debug (Tổ hợp, trả về ngay lập tức)
     assign dbg_read_data = f_regfile[dbg_read_addr];
@@ -100,8 +152,13 @@ module f_register_file (
                 f_regfile[dbg_write_addr] <= dbg_write_data;
             end 
             // Nếu không Halt, pipeline hoạt động bình thường
-            else if (reg_write_en) begin
-                f_regfile[write_reg] <= write_data;
+            else begin
+                if (reg_write_en) begin
+                    f_regfile[write_reg] <= write_data;
+                end
+                if (reg_write_en_lane1) begin
+                    f_regfile[write_reg_lane1] <= write_data_lane1;
+                end
             end
         end
     end
@@ -116,6 +173,8 @@ module csr_register_file (
     input mtip_i, // Timer Interrupt Pending
     input [11:0] csr_addr,
     output reg [31:0] csr_read_data,
+    input [11:0] csr_addr_lane1,
+    output reg [31:0] csr_read_data_lane1,
     input [11:0] csr_write_addr,
     input [31:0] csr_write_data,
     input [1:0] csr_op,
@@ -180,49 +239,42 @@ module csr_register_file (
     assign dpc_out = dpc;
     assign dcsr_out = dcsr;
 
+    function [31:0] csr_read_value;
+        input [11:0] addr;
+        begin
+            case (addr)
+                12'hF11: csr_read_value = MVENDORID;
+                12'hF12: csr_read_value = MARCHID;
+                12'hF13: csr_read_value = MIMPID;
+                12'hF14: csr_read_value = MHARTID;
+                12'h301: csr_read_value = MISA;
+                12'h300: csr_read_value = mstatus;
+                12'h304: csr_read_value = mie;
+                12'h305: csr_read_value = mtvec;
+                12'h340: csr_read_value = mscratch;
+                12'h341: csr_read_value = mepc;
+                12'h342: csr_read_value = mcause;
+                12'h343: csr_read_value = mtval;
+                12'h344: csr_read_value = mip_val;
+                12'hB00, 12'hC00, 12'hC01: csr_read_value = mcycle[31:0];
+                12'hB80, 12'hC80, 12'hC81: csr_read_value = mcycle[63:32];
+                12'hB02, 12'hC02:          csr_read_value = minstret[31:0];
+                12'hB82, 12'hC82:          csr_read_value = minstret[63:32];
+                12'h7b0: csr_read_value = dcsr;
+                12'h7b1: csr_read_value = dpc;
+                12'h7b2: csr_read_value = dscratch0;
+                default: csr_read_value = 32'b0;
+            endcase
+        end
+    endfunction
+
     always @(*) begin
-        case (csr_addr)
-            12'hF11: csr_read_data = MVENDORID;
-            12'hF12: csr_read_data = MARCHID;
-            12'hF13: csr_read_data = MIMPID;
-            12'hF14: csr_read_data = MHARTID;
-            12'h301: csr_read_data = MISA;
-            12'h300: csr_read_data = mstatus;
-            12'h304: csr_read_data = mie;
-            12'h305: csr_read_data = mtvec;
-            12'h340: csr_read_data = mscratch;
-            12'h341: csr_read_data = mepc;
-            12'h342: csr_read_data = mcause;
-            12'h343: csr_read_data = mtval;
-            12'h344: csr_read_data = mip_val;
-            12'hB00, 12'hC00, 12'hC01: csr_read_data = mcycle[31:0];
-            12'hB80, 12'hC80, 12'hC81: csr_read_data = mcycle[63:32];
-            12'hB02, 12'hC02:          csr_read_data = minstret[31:0];
-            12'hB82, 12'hC82:          csr_read_data = minstret[63:32];
-            // Read Debug CSRs
-            12'h7b0: csr_read_data = dcsr;
-            12'h7b1: csr_read_data = dpc;
-            12'h7b2: csr_read_data = dscratch0;
-            default: csr_read_data = 32'b0;
-        endcase
+        csr_read_data = csr_read_value(csr_addr);
+        csr_read_data_lane1 = csr_read_value(csr_addr_lane1);
     end
 
     always @(*) begin
-        case (dbg_reg_read_addr)
-            12'hF11: dbg_read_data = MVENDORID;
-            12'hF12: dbg_read_data = MARCHID;
-            12'h301: dbg_read_data = MISA;
-            12'h300: dbg_read_data = mstatus;
-            12'h304: dbg_read_data = mie;
-            12'h305: dbg_read_data = mtvec;
-            12'h341: dbg_read_data = mepc;
-            12'hB00, 12'hC00, 12'hC01: dbg_read_data = mcycle[31:0];
-            // Debug CSRs
-            12'h7b0: dbg_read_data = dcsr;
-            12'h7b1: dbg_read_data = dpc;
-            12'h7b2: dbg_read_data = dscratch0;
-            default: dbg_read_data = 32'b0;
-        endcase
+        dbg_read_data = csr_read_value(dbg_reg_read_addr);
     end
     
     always @(posedge clk or negedge reset_n) begin

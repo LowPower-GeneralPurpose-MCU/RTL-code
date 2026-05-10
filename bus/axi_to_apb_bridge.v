@@ -10,7 +10,8 @@ module axi_to_apb_bridge #(
     // ==========================================
     input  wire                     clk_axi,
     input  wire                     clk_apb,
-    input  wire                     rst_n,
+    input  wire                     rst_axi_n,
+    input  wire                     rst_apb_n,
 
     // ==========================================
     // AXI4 FULL SLAVE INTERFACE (Miền clk_axi)
@@ -119,8 +120,8 @@ module axi_to_apb_bridge #(
     // ==========================================
     // 1. WRITE FSM (Miền clk_axi - GIỮ NGUYÊN BẢN GỐC)
     // ==========================================
-    always @(posedge clk_axi or negedge rst_n) begin
-        if (!rst_n) begin
+    always @(posedge clk_axi or negedge rst_axi_n) begin
+        if (!rst_axi_n) begin
             w_state       <= W_IDLE;
             s_axi_awready <= 1'b0;
             s_axi_wready  <= 1'b0;
@@ -193,8 +194,8 @@ module axi_to_apb_bridge #(
     // ==========================================
     // 2. READ FSM (Miền clk_axi - GIỮ NGUYÊN BẢN GỐC)
     // ==========================================
-    always @(posedge clk_axi or negedge rst_n) begin
-        if (!rst_n) begin
+    always @(posedge clk_axi or negedge rst_axi_n) begin
+        if (!rst_axi_n) begin
             r_state       <= R_IDLE;
             s_axi_arready <= 1'b0;
             s_axi_rvalid  <= 1'b0;
@@ -263,8 +264,8 @@ module axi_to_apb_bridge #(
     wire [71:0] cmd_fifo_rdata;
 
     cdc_async_fifo_wrapper #(.DATA_WIDTH(72), .DEPTH_LOG2(4)) u_cmd_fifo (
-        .wclk(clk_axi), .wrst_n(rst_n), .wen(cmd_fifo_wr), .wdata(cmd_fifo_wdata), .wfull(cmd_fifo_full),
-        .rclk(clk_apb), .rrst_n(rst_n), .ren(cmd_fifo_rd), .rdata(cmd_fifo_rdata), .rempty(cmd_fifo_empty)
+        .wclk(clk_axi), .wrst_n(rst_axi_n), .wen(cmd_fifo_wr), .wdata(cmd_fifo_wdata), .wfull(cmd_fifo_full),
+        .rclk(clk_apb), .rrst_n(rst_apb_n), .ren(cmd_fifo_rd), .rdata(cmd_fifo_rdata), .rempty(cmd_fifo_empty)
     );
 
     // Width = 1(Err) + 32(Data) = 33 bits
@@ -275,8 +276,8 @@ module axi_to_apb_bridge #(
     wire [32:0] resp_fifo_rdata;
 
     cdc_async_fifo_wrapper #(.DATA_WIDTH(33), .DEPTH_LOG2(4)) u_resp_fifo (
-        .wclk(clk_apb), .wrst_n(rst_n), .wen(resp_fifo_wr), .wdata(resp_fifo_wdata), .wfull(resp_fifo_full),
-        .rclk(clk_axi), .rrst_n(rst_n), .ren(resp_fifo_rd), .rdata(resp_fifo_rdata), .rempty(resp_fifo_empty)
+        .wclk(clk_apb), .wrst_n(rst_apb_n), .wen(resp_fifo_wr), .wdata(resp_fifo_wdata), .wfull(resp_fifo_full),
+        .rclk(clk_axi), .rrst_n(rst_axi_n), .ren(resp_fifo_rd), .rdata(resp_fifo_rdata), .rempty(resp_fifo_empty)
     );
 
     // ==========================================
@@ -295,8 +296,8 @@ module axi_to_apb_bridge #(
     assign cross_prdata  = resp_fifo_rdata[31:0];
     assign cross_pslverr = resp_fifo_rdata[32];
 
-    always @(posedge clk_axi or negedge rst_n) begin
-        if (!rst_n) begin
+    always @(posedge clk_axi or negedge rst_axi_n) begin
+        if (!rst_axi_n) begin
             arb_state <= ARB_IDLE;
             cmd_fifo_wr <= 0; resp_fifo_rd <= 0;
             ack_w <= 0; ack_r <= 0;
@@ -345,8 +346,8 @@ module axi_to_apb_bridge #(
 
     assign cmd_fifo_rd = (apb_fsm == P_IDLE) && !cmd_fifo_empty && !resp_fifo_full;
 
-    always @(posedge clk_apb or negedge rst_n) begin
-        if (!rst_n) begin
+    always @(posedge clk_apb or negedge rst_apb_n) begin
+        if (!rst_apb_n) begin
             apb_fsm <= P_IDLE;
             m_apb_psel <= 0; m_apb_penable <= 0; m_apb_pwrite <= 0;
             m_apb_paddr <= 0; m_apb_pwdata <= 0; m_apb_pstrb <= 0; m_apb_pprot <= 0;

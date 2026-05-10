@@ -2,7 +2,8 @@ module arbiter_iwrr_1cycle
 #(
     parameter P_REQUESTER_NUM     = 4,
     parameter [0:(P_REQUESTER_NUM*32)-1] P_REQUESTER_WEIGHT = {32'd5, 32'd3, 32'd2, 32'd1},
-    parameter P_NUM_GRANT_REQ_W   = 1
+    parameter P_NUM_GRANT_REQ_W   = 1,
+    parameter P_CREDIT_W          = 8
 )
 (
     input                               clk,
@@ -14,14 +15,16 @@ module arbiter_iwrr_1cycle
     output [P_REQUESTER_NUM-1:0]        grant_valid_o
 );
     localparam REQ_W    = P_REQUESTER_NUM;
-    localparam WEIGHT_W = 32;
+    localparam WEIGHT_W = P_CREDIT_W;
     localparam IDX_W    = (REQ_W > 1) ? $clog2(REQ_W) : 1;
 
     // Weight lookup
     function [WEIGHT_W-1:0] get_weight;
         input integer idx;
+        reg [31:0] weight_32;
         begin
-            get_weight = P_REQUESTER_WEIGHT[idx * 32 +: 32];
+            weight_32 = P_REQUESTER_WEIGHT[idx * 32 +: 32];
+            get_weight = weight_32[WEIGHT_W-1:0];
         end
     endfunction
 
@@ -34,9 +37,11 @@ module arbiter_iwrr_1cycle
 
     // Round-robin with credit-based weighting
     reg [REQ_W-1:0] grant_candidate;
+    reg [REQ_W-1:0] grant_credit_le_one;
     reg found;
     reg [IDX_W:0]   idx_sum;
     reg [IDX_W-1:0] idx_wrapped;
+    wire refill_after_grant;
 
     always @(*) begin
         grant_candidate = {REQ_W{1'b0}};
@@ -71,12 +76,15 @@ module arbiter_iwrr_1cycle
 
     assign grant_valid_o = (|req_i) ? grant_candidate : {REQ_W{1'b0}};
     assign grant_handshake = (|grant_valid_o) & grant_ready_i;
+    assign refill_after_grant = grant_handshake & |(grant_candidate & grant_credit_le_one);
 
     // One-hot to binary for indexing
     reg [IDX_W-1:0] grant_idx;
     always @(*) begin
         grant_idx = {IDX_W{1'b0}};
+        grant_credit_le_one = {REQ_W{1'b0}};
         for (i = 0; i < REQ_W; i = i + 1) begin
+            grant_credit_le_one[i] = (credit[i] <= {{(WEIGHT_W-1){1'b0}}, 1'b1});
             if (grant_candidate[i])
                 grant_idx = i[IDX_W-1:0];
         end
@@ -90,18 +98,21 @@ module arbiter_iwrr_1cycle
                 credit[i] <= get_weight(i);
         end else if (grant_handshake) begin
             last_grant_idx <= grant_idx;
-            // Decrement credit for granted requester
-            if (credit[grant_idx] > 0)
-                credit[grant_idx] <= credit[grant_idx] - 1'b1;
-            // Refill when granted requester exhausts credit
-            if (credit[grant_idx] <= 1) begin
-                for (i = 0; i < REQ_W; i = i + 1)
+            if (refill_after_grant) begin
+                for (i = 0; i < REQ_W; i = i + 1) begin
                     credit[i] <= get_weight(i);
+                end
+            end else begin
+                for (i = 0; i < REQ_W; i = i + 1) begin
+                    if (grant_candidate[i] && (credit[i] > {WEIGHT_W{1'b0}}))
+                        credit[i] <= credit[i] - 1'b1;
+                end
             end
         end
     end
 
 endmodule
+
 
 module sa_Ax_channel 
 #(
@@ -113,14 +124,16 @@ module sa_Ax_channel
     // Transaction configuration
     parameter                       DATA_WIDTH          = 32,
     parameter                       ADDR_WIDTH          = 32,
-    parameter                       TRANS_MST_ID_W      = 5,                                // Width of master transaction ID 
-    parameter                       TRANS_SLV_ID_W      = TRANS_MST_ID_W + $clog2(MST_AMT), // Width of slave transaction ID
+    parameter                       TRANS_MST_ID_W      = 5,                                // Width of original master transaction ID
+    parameter                       DSP_ID_W            = TRANS_MST_ID_W,                   // Width of dispatcher-side AxID
+    parameter                       TRANS_SLV_ID_W      = DSP_ID_W + MST_ID_W,              // Width of slave transaction ID
     parameter                       TRANS_BURST_W       = 2,                                // Width of xBURST 
     parameter                       TRANS_DATA_LEN_W    = 8,                                // Width of xLEN (AXI4: 8-bit, burst 1-256)
     parameter                       TRANS_DATA_SIZE_W   = 3,                                // Width of xSIZE
     // Slave info configuration
-    parameter [31:0] SLV_BASE_ADDR = 32'h0,
-    parameter [31:0] SLV_ADDR_MASK = 32'h0
+    parameter                       SLV_ID              = 0,
+    parameter                       SLV_ID_MSB_IDX      = 30,
+    parameter                       SLV_ID_LSB_IDX      = 30
 )
 (
     // Input declaration
@@ -129,7 +142,7 @@ module sa_Ax_channel
     input                                   ARESETn_i,
     input                                   xDATA_stall_i,
     // -- To Dispatcher x3
-    input   [TRANS_MST_ID_W*MST_AMT-1:0]    dsp_AxID_i,
+    input   [DSP_ID_W*MST_AMT-1:0]          dsp_AxID_i,
     input   [ADDR_WIDTH*MST_AMT-1:0]        dsp_AxADDR_i,
     input   [TRANS_BURST_W*MST_AMT-1:0]     dsp_AxBURST_i,
     input   [TRANS_DATA_LEN_W*MST_AMT-1:0]  dsp_AxLEN_i,
@@ -167,8 +180,9 @@ module sa_Ax_channel
     output                                  xDATA_fifo_order_wr_en_o
 );
     // Local parameters initialization
-    localparam ADDR_INFO_W  = TRANS_MST_ID_W + ADDR_WIDTH + TRANS_BURST_W + TRANS_DATA_LEN_W + TRANS_DATA_SIZE_W + 1 + 4 + 3 + 4 + 4; // +LOCK+CACHE+PROT+QOS+REGION
+    localparam ADDR_INFO_W  = DSP_ID_W + ADDR_WIDTH + TRANS_BURST_W + TRANS_DATA_LEN_W + TRANS_DATA_SIZE_W + 1 + 4 + 3 + 4 + 4; // +LOCK+CACHE+PROT+QOS+REGION
     localparam AX_INFO_W    = TRANS_SLV_ID_W + ADDR_WIDTH + TRANS_BURST_W + TRANS_DATA_LEN_W + TRANS_DATA_SIZE_W + 1 + 4 + 3 + 4 + 4; // +LOCK+CACHE+PROT+QOS+REGION
+    localparam ID_PAD_W     = TRANS_SLV_ID_W - MST_ID_W - DSP_ID_W;
     
     // Internal variable declaration
     genvar mst_idx;
@@ -179,7 +193,7 @@ module sa_Ax_channel
     wire    [ADDR_INFO_W-1:0]       ADDR_info               [MST_AMT-1:0];
     wire    [ADDR_INFO_W-1:0]       ADDR_info_valid         [MST_AMT-1:0];
     wire    [ADDR_WIDTH-1:0]        AxADDR_i                [MST_AMT-1:0];  // De-flatten wire 
-    wire    [TRANS_MST_ID_W-1:0]    AxID_valid              [MST_AMT-1:0];
+    wire    [DSP_ID_W-1:0]          AxID_valid              [MST_AMT-1:0];
     wire    [ADDR_WIDTH-1:0]        AxADDR_valid            [MST_AMT-1:0];
     wire    [TRANS_BURST_W-1:0]     AxBURST_valid           [MST_AMT-1:0];
     wire    [TRANS_DATA_LEN_W-1:0]  AxLEN_valid             [MST_AMT-1:0];
@@ -257,6 +271,11 @@ module sa_Ax_channel
     reg     [3:0]                   AxQOS_o_r;
     reg     [3:0]                   AxREGION_o_r;
     reg                             AxVALID_o_r;
+    reg     [TRANS_SLV_ID_W-1:0]    xDATA_AxID_o_r;
+    reg     [TRANS_DATA_LEN_W-1:0]  xDATA_AxLEN_o_r;
+    reg     [MST_ID_W-1:0]          xDATA_mst_id_o_r;
+    reg                             xDATA_crossing_flag_o_r;
+    reg                             xDATA_fifo_order_wr_en_o_r;
     reg                             msk_split_addr_sel      [MST_AMT-1:0];
     reg                             trans_booter_flag;
     
@@ -355,9 +374,9 @@ module sa_Ax_channel
         // Dispatcher interface
         assign dsp_AxREADY_o[mst_idx] = ~(dsp_dispatcher_full_i[mst_idx] | fifo_addr_info_full[mst_idx]);
         // FIFO
-        assign ADDR_info[mst_idx] = {dsp_AxID_i[TRANS_MST_ID_W*(mst_idx+1)-1-:TRANS_MST_ID_W], dsp_AxADDR_i[ADDR_WIDTH*(mst_idx+1)-1-:ADDR_WIDTH], dsp_AxBURST_i[TRANS_BURST_W*(mst_idx+1)-1-:TRANS_BURST_W], dsp_AxLEN_i[TRANS_DATA_LEN_W*(mst_idx+1)-1-:TRANS_DATA_LEN_W], dsp_AxSIZE_i[TRANS_DATA_SIZE_W*(mst_idx+1)-1-:TRANS_DATA_SIZE_W], dsp_AxLOCK_i[mst_idx], dsp_AxCACHE_i[4*(mst_idx+1)-1-:4], dsp_AxPROT_i[3*(mst_idx+1)-1-:3], dsp_AxQOS_i[4*(mst_idx+1)-1-:4], dsp_AxREGION_i[4*(mst_idx+1)-1-:4]};
+        assign ADDR_info[mst_idx] = {dsp_AxID_i[DSP_ID_W*(mst_idx+1)-1-:DSP_ID_W], dsp_AxADDR_i[ADDR_WIDTH*(mst_idx+1)-1-:ADDR_WIDTH], dsp_AxBURST_i[TRANS_BURST_W*(mst_idx+1)-1-:TRANS_BURST_W], dsp_AxLEN_i[TRANS_DATA_LEN_W*(mst_idx+1)-1-:TRANS_DATA_LEN_W], dsp_AxSIZE_i[TRANS_DATA_SIZE_W*(mst_idx+1)-1-:TRANS_DATA_SIZE_W], dsp_AxLOCK_i[mst_idx], dsp_AxCACHE_i[4*(mst_idx+1)-1-:4], dsp_AxPROT_i[3*(mst_idx+1)-1-:3], dsp_AxQOS_i[4*(mst_idx+1)-1-:4], dsp_AxREGION_i[4*(mst_idx+1)-1-:4]};
         assign AxADDR_i[mst_idx] = dsp_AxADDR_i[ADDR_WIDTH*(mst_idx+1)-1-:ADDR_WIDTH];
-        assign slv_addr_decoder[mst_idx] = (AxADDR_i[mst_idx] & SLV_ADDR_MASK) == SLV_BASE_ADDR;
+        assign slv_addr_decoder[mst_idx] = AxADDR_i[mst_idx][SLV_ID_MSB_IDX:SLV_ID_LSB_IDX] == SLV_ID;
         assign dsp_AxVALID_dec[mst_idx] = slv_addr_decoder[mst_idx] & dsp_AxVALID_i[mst_idx];
         assign dsp_handshake_occur[mst_idx] = dsp_AxVALID_dec[mst_idx] & dsp_AxREADY_o[mst_idx];
         assign fifo_addr_info_wr_en[mst_idx] = dsp_handshake_occur[mst_idx];
@@ -391,7 +410,13 @@ module sa_Ax_channel
     assign s_AxQOS_o = ssb_fwd_AxQOS;
     assign s_AxREGION_o = ssb_fwd_AxREGION;
     assign s_AxVALID_o = ssb_fwd_valid;
-    assign AxID_o_nxt = {granted_mst_id, AxID_valid[granted_mst_id]};
+    generate
+        if (ID_PAD_W > 0) begin : PADDED_ID
+            assign AxID_o_nxt = {granted_mst_id, {ID_PAD_W{1'b0}}, AxID_valid[granted_mst_id]};
+        end else begin : PACKED_ID
+            assign AxID_o_nxt = {granted_mst_id, AxID_valid[granted_mst_id]};
+        end
+    endgenerate
     assign AxADDR_o_nxt = AxADDR_valid_split[granted_mst_id];
     assign AxBURST_o_nxt = AxBURST_valid[granted_mst_id];
     assign AxLEN_o_nxt = AxLEN_valid_split[granted_mst_id];
@@ -403,11 +428,11 @@ module sa_Ax_channel
     assign AxREGION_o_nxt = AxREGION_valid[granted_mst_id];
     assign AxVALID_o_nxt = arb_req_remain & ~xDATA_stall_i;
     // -- 
-    assign xDATA_AxID_o = AxID_o_nxt;
-    assign xDATA_mst_id_o = AxID_o_nxt[TRANS_SLV_ID_W-1-:MST_ID_W];
-    assign xDATA_crossing_flag_o = msk_addr_crossing_valid[granted_mst_id];
-    assign xDATA_AxLEN_o = AxLEN_o_nxt;
-    assign xDATA_fifo_order_wr_en_o = AxVALID_o_nxt & x_channel_shift_en;
+    assign xDATA_AxID_o = xDATA_AxID_o_r;
+    assign xDATA_mst_id_o = xDATA_mst_id_o_r;
+    assign xDATA_crossing_flag_o = xDATA_crossing_flag_o_r;
+    assign xDATA_AxLEN_o = xDATA_AxLEN_o_r;
+    assign xDATA_fifo_order_wr_en_o = xDATA_fifo_order_wr_en_o_r;
     // -- Slave skid buffer 
     assign ssb_bwd_data     = {AxID_o_r, AxADDR_o_r, AxBURST_o_r, AxLEN_o_r, AxSIZE_o_r, AxLOCK_o_r, AxCACHE_o_r, AxPROT_o_r, AxQOS_o_r, AxREGION_o_r};
     assign ssb_bwd_valid    = AxVALID_o_r;
@@ -464,9 +489,30 @@ module sa_Ax_channel
             AxVALID_o_r <= AxVALID_o_nxt;
         end
     end
+    // Register cross-channel metadata so W/B/R sideband FIFOs are not fed
+    // directly from the address arbitration/split combinational cone.
+    always @(posedge ACLK_i) begin
+        if(~ARESETn_i) begin
+            xDATA_AxID_o_r <= 0;
+            xDATA_AxLEN_o_r <= 0;
+            xDATA_mst_id_o_r <= 0;
+            xDATA_crossing_flag_o_r <= 1'b0;
+            xDATA_fifo_order_wr_en_o_r <= 1'b0;
+        end
+        else begin
+            xDATA_fifo_order_wr_en_o_r <= AxVALID_o_nxt & x_channel_shift_en;
+            if(AxVALID_o_nxt & x_channel_shift_en) begin
+                xDATA_AxID_o_r <= AxID_o_nxt;
+                xDATA_AxLEN_o_r <= AxLEN_o_nxt;
+                xDATA_mst_id_o_r <= AxID_o_nxt[TRANS_SLV_ID_W-1-:MST_ID_W];
+                xDATA_crossing_flag_o_r <= msk_addr_crossing_valid[granted_mst_id];
+            end
+        end
+    end
 endmodule
 
-module sa_R_channel 
+
+module sa_R_channel
 #(
     // Interconnect configuration
     parameter                       MST_AMT             = 3,
@@ -475,8 +521,9 @@ module sa_R_channel
     // Transaction configuration
     parameter                       DATA_WIDTH          = 32,
     parameter                       ADDR_WIDTH          = 32,
-    parameter                       TRANS_MST_ID_W      = 5,                            // Bus width of master transaction ID 
+    parameter                       TRANS_MST_ID_W      = 5,                            // Bus width of original master transaction ID
     parameter                       TRANS_SLV_ID_W      = TRANS_MST_ID_W + MST_ID_W,    // Bus width of slave transaction ID
+    parameter                       DSP_RID_W           = TRANS_SLV_ID_W - MST_ID_W,    // Dispatcher RID returned after dropping master_id
     parameter                       TRANS_WR_RESP_W     = 2
 )
 (
@@ -488,7 +535,7 @@ module sa_R_channel
     // ---- Read data channel
     input   [MST_AMT-1:0]                   dsp_RREADY_i,
     // -- To slave (master interface of the interconnect)
-    // ---- Read data channel 
+    // ---- Read data channel
     input   [TRANS_SLV_ID_W-1:0]            s_RID_i,
     input   [DATA_WIDTH-1:0]                s_RDATA_i,
     input   [TRANS_WR_RESP_W-1:0]           s_RRESP_i,
@@ -498,11 +545,11 @@ module sa_R_channel
     input   [TRANS_SLV_ID_W-1:0]            AR_AxID_i,
     input                                   AR_crossing_flag_i,
     input                                   AR_shift_en_i,
-    
+
     // Output declaration
     // -- To Dispatcher
     // ---- Read data channel (master)
-    output  [TRANS_MST_ID_W*MST_AMT-1:0]    dsp_RID_o,
+    output  [DSP_RID_W*MST_AMT-1:0]         dsp_RID_o,
     output  [DATA_WIDTH*MST_AMT-1:0]        dsp_RDATA_o,
     output  [TRANS_WR_RESP_W*MST_AMT-1:0]   dsp_RRESP_o,
     output  [MST_AMT-1:0]                   dsp_RLAST_o,
@@ -515,31 +562,37 @@ module sa_R_channel
 );
 
     // Local parameters initialization
-    localparam FILTER_INFO_W    = TRANS_SLV_ID_W + 1; // crossing flag + transaction ID
     localparam R_INFO_W         = TRANS_SLV_ID_W + DATA_WIDTH + TRANS_WR_RESP_W + 1;
-    
-    // Internal variable declaration 
+    localparam R_OUT_INFO_W     = MST_ID_W + DSP_RID_W + DATA_WIDTH + TRANS_WR_RESP_W + 1;
+    localparam FILTER_DEPTH     = OUTSTANDING_AMT * MST_AMT;
+    localparam FILTER_CNT_W     = (FILTER_DEPTH <= 1) ? 1 : $clog2(FILTER_DEPTH + 1);
+    localparam [FILTER_CNT_W-1:0] FILTER_DEPTH_C = FILTER_DEPTH;
+
+    // Internal variable declaration
     genvar mst_idx;
+    genvar filter_idx;
+    integer i;
+    integer filter_push_slot;
+    reg     filter_shift_seen;
+
     // Internal signal declaration
-    // -- wire declaration
-    // ---- FIFO RLAST filter
-    wire    [FILTER_INFO_W-1:0]     filter_info;
-    wire    [FILTER_INFO_W-1:0]     filter_info_valid;
-    wire                            fifo_filter_wr_en;
-    wire                            fifo_filter_rd_en;
-    wire                            fifo_filter_full;
-    wire                            fifo_filter_empty;
-    // ---- Write response filter
-    wire    [TRANS_SLV_ID_W-1:0]    ARID_valid;
-    wire                            crossing_flag_valid;
-    wire                            filter_ARID_match;
+    // ---- Small CAM RLAST filter for 4KB split transactions
+    wire                            filter_wr_en;
+    wire                            filter_rd_en;
+    wire                            filter_empty;
+    wire                            filter_full;
     wire                            filter_condition;
     wire                            filter_RLAST;
+    wire                            filter_match_found;
+    wire    [FILTER_DEPTH-1:0]      filter_cross_vec;
+    wire    [FILTER_DEPTH-1:0]      filter_match_vec;
+    wire    [FILTER_DEPTH-1:0]      filter_match_first_vec;
     // -- Handshake detector
     wire                            slv_handshake_occur;
     // -- Master mapping
     wire    [MST_ID_W-1:0]          mst_id;
     wire                            dsp_RREADY_valid;
+    wire    [MST_AMT-1:0]           mst_sel;
     // -- Slave skid buffer
     wire    [R_INFO_W-1:0]          ssb_bwd_data;
     wire                            ssb_bwd_valid;
@@ -551,29 +604,28 @@ module sa_R_channel
     wire    [DATA_WIDTH-1:0]        ssb_fwd_RDATA;
     wire    [TRANS_WR_RESP_W-1:0]   ssb_fwd_RRESP;
     wire                            ssb_fwd_RLAST;
-    
+    // -- Dispatcher skid buffer
+    wire    [R_OUT_INFO_W-1:0]      dsb_bwd_data;
+    wire                            dsb_bwd_valid;
+    wire                            dsb_bwd_ready;
+    wire    [R_OUT_INFO_W-1:0]      dsb_fwd_data;
+    wire                            dsb_fwd_valid;
+    wire                            dsb_fwd_ready;
+    wire    [MST_ID_W-1:0]          dsb_fwd_mst_id;
+    wire    [DSP_RID_W-1:0]         dsb_fwd_RID;
+    wire    [DATA_WIDTH-1:0]        dsb_fwd_RDATA;
+    wire    [TRANS_WR_RESP_W-1:0]   dsb_fwd_RRESP;
+    wire                            dsb_fwd_RLAST;
+    wire    [MST_AMT-1:0]           dsb_mst_sel;
+
+    // Instead of a 2^TRANS_SLV_ID_W table, keep only issued AR entries.
+    // Synthesis cost is bounded by FILTER_DEPTH comparators.
+    reg                             filter_valid_q  [0:FILTER_DEPTH-1];
+    reg                             filter_cross_q  [0:FILTER_DEPTH-1];
+    reg     [TRANS_SLV_ID_W-1:0]    filter_id_q     [0:FILTER_DEPTH-1];
+    reg     [FILTER_CNT_W-1:0]      filter_count_q;
+
     // Module
-    // -- FIFO WRESP ordering
-    sync_fifo 
-    #(
-        .FIFO_TYPE(0),
-        .DATA_WIDTH(FILTER_INFO_W),
-        .FIFO_DEPTH(OUTSTANDING_AMT)
-    ) fifo_wresp_filter (
-        .clk(ACLK_i),
-        .rst_n(ARESETn_i),
-        .data_i(filter_info),
-        .data_o(filter_info_valid),
-        .wr_valid_i(fifo_filter_wr_en),
-        .rd_valid_i(fifo_filter_rd_en),
-        .empty_o(fifo_filter_empty),
-        .full_o(fifo_filter_full),
-        .wr_ready_o(),
-        .rd_ready_o(),
-        .almost_empty_o(),
-        .almost_full_o(),
-        .counter()
-    );
     // Slave skid buffer (pipelined in/out)
     skid_buffer #(
         .SBUF_TYPE(1),
@@ -588,41 +640,128 @@ module sa_R_channel
         .bwd_ready_o(ssb_bwd_ready),
         .fwd_valid_o(ssb_fwd_valid)
     );
+    skid_buffer #(
+        .SBUF_TYPE(1),
+        .DATA_WIDTH(R_OUT_INFO_W)
+    ) dsp_skid_buffer (
+        .clk        (ACLK_i),
+        .rst_n      (ARESETn_i),
+        .bwd_data_i (dsb_bwd_data),
+        .bwd_valid_i(dsb_bwd_valid),
+        .fwd_ready_i(dsb_fwd_ready),
+        .fwd_data_o (dsb_fwd_data),
+        .bwd_ready_o(dsb_bwd_ready),
+        .fwd_valid_o(dsb_fwd_valid)
+    );
+
     // Combinational logic
-    // -- FIFO WRESP filter
-    assign filter_info = {AR_crossing_flag_i, AR_AxID_i};
-    assign fifo_filter_wr_en = AR_shift_en_i;
-    assign fifo_filter_rd_en = slv_handshake_occur & ssb_fwd_RLAST;
-    // -- Write response filter
-    assign {crossing_flag_valid, ARID_valid} = filter_info_valid;
-    assign filter_ARID_match = ARID_valid == ssb_fwd_RID;
-    assign filter_condition = filter_ARID_match & (~fifo_filter_empty) & crossing_flag_valid;
-    assign filter_RLAST = ssb_fwd_RLAST & ~filter_condition;
+    // -- Small CAM RLAST filter
+    assign filter_wr_en       = AR_shift_en_i;
+    assign filter_empty       = (filter_count_q == {FILTER_CNT_W{1'b0}});
+    assign filter_full        = (filter_count_q == FILTER_DEPTH_C);
+    assign filter_match_found = |filter_match_vec;
+    assign filter_rd_en       = slv_handshake_occur & ssb_fwd_RLAST & filter_match_found;
+    assign filter_condition   = |(filter_match_first_vec & filter_cross_vec);
+    assign filter_RLAST       = ssb_fwd_RLAST & ~filter_condition;
+
     // -- Handshake detector
     assign slv_handshake_occur = ssb_fwd_valid & ssb_fwd_ready;
     // -- Master mapping
     assign mst_id = ssb_fwd_RID[(TRANS_SLV_ID_W-1)-:MST_ID_W];
     // -- Slave Output
     assign s_RREADY_o = ssb_bwd_ready;
+
     // -- Dispatcher Output
     generate
         for(mst_idx = 0; mst_idx < MST_AMT; mst_idx = mst_idx + 1) begin : MST_LOGIC
-            assign dsp_RVALID_o[mst_idx] = (mst_id == mst_idx) & ssb_fwd_valid;
-            assign dsp_RID_o[TRANS_MST_ID_W*(mst_idx+1)-1-:TRANS_MST_ID_W] = ssb_fwd_RID[TRANS_MST_ID_W-1:0];
-            assign dsp_RDATA_o[DATA_WIDTH*(mst_idx+1)-1-:DATA_WIDTH] = ssb_fwd_RDATA;
-            assign dsp_RRESP_o[TRANS_WR_RESP_W*(mst_idx+1)-1-:TRANS_WR_RESP_W] = ssb_fwd_RRESP;
-            assign dsp_RLAST_o[mst_idx] = filter_RLAST;
+            assign mst_sel[mst_idx] = (mst_id == mst_idx);
+            assign dsb_mst_sel[mst_idx] = (dsb_fwd_mst_id == mst_idx);
+            assign dsp_RVALID_o[mst_idx] = dsb_mst_sel[mst_idx] & dsb_fwd_valid;
+            assign dsp_RID_o[DSP_RID_W*(mst_idx+1)-1-:DSP_RID_W] = dsb_fwd_RID;
+            assign dsp_RDATA_o[DATA_WIDTH*(mst_idx+1)-1-:DATA_WIDTH] = dsb_fwd_RDATA;
+            assign dsp_RRESP_o[TRANS_WR_RESP_W*(mst_idx+1)-1-:TRANS_WR_RESP_W] = dsb_fwd_RRESP;
+            assign dsp_RLAST_o[mst_idx] = dsb_fwd_RLAST;
         end
     endgenerate
+    assign dsp_RREADY_valid = |(dsp_RREADY_i & dsb_mst_sel);
+
+    generate
+        for(filter_idx = 0; filter_idx < FILTER_DEPTH; filter_idx = filter_idx + 1) begin : FILTER_CAM
+            assign filter_cross_vec[filter_idx] = filter_cross_q[filter_idx];
+            assign filter_match_vec[filter_idx] = filter_valid_q[filter_idx] &
+                                                  (filter_id_q[filter_idx] == ssb_fwd_RID);
+            if (filter_idx == 0) begin : FIRST_ENTRY
+                assign filter_match_first_vec[filter_idx] = filter_match_vec[filter_idx];
+            end else begin : NEXT_ENTRY
+                assign filter_match_first_vec[filter_idx] = filter_match_vec[filter_idx] &
+                                                            ~(|filter_match_vec[filter_idx-1:0]);
+            end
+        end
+    endgenerate
+
     // -- Slave skid buffer
     assign ssb_bwd_data     = {s_RID_i, s_RDATA_i, s_RRESP_i, s_RLAST_i};
     assign ssb_bwd_valid    = s_RVALID_i;
-    assign ssb_fwd_ready    = dsp_RREADY_i[mst_id];
+    assign ssb_fwd_ready    = dsb_bwd_ready;
     assign {ssb_fwd_RID, ssb_fwd_RDATA, ssb_fwd_RRESP, ssb_fwd_RLAST} = ssb_fwd_data;
-    // -- Write Address channel Output
-    assign AR_stall_o = fifo_filter_full;
+    // -- Dispatcher skid buffer
+    assign dsb_bwd_data     = {mst_id, ssb_fwd_RID[DSP_RID_W-1:0], ssb_fwd_RDATA, ssb_fwd_RRESP, filter_RLAST};
+    assign dsb_bwd_valid    = ssb_fwd_valid;
+    assign dsb_fwd_ready    = dsp_RREADY_valid;
+    assign {dsb_fwd_mst_id, dsb_fwd_RID, dsb_fwd_RDATA, dsb_fwd_RRESP, dsb_fwd_RLAST} = dsb_fwd_data;
+
+    // -- Read Address channel Output
+    assign AR_stall_o = filter_full;
+
+    always @(posedge ACLK_i or negedge ARESETn_i) begin
+        if (!ARESETn_i) begin
+            filter_count_q <= {FILTER_CNT_W{1'b0}};
+            for (i = 0; i < FILTER_DEPTH; i = i + 1) begin
+                filter_valid_q[i] <= 1'b0;
+                filter_cross_q[i] <= 1'b0;
+                filter_id_q[i]    <= {TRANS_SLV_ID_W{1'b0}};
+            end
+        end else begin
+            filter_push_slot = filter_count_q;
+
+            if (filter_rd_en) begin
+                filter_push_slot = filter_count_q - 1'b1;
+                filter_shift_seen = 1'b0;
+                for (i = 0; i < FILTER_DEPTH; i = i + 1) begin
+                    if (filter_match_first_vec[i]) begin
+                        filter_shift_seen = 1'b1;
+                    end
+
+                    if (filter_shift_seen) begin
+                        if (i == FILTER_DEPTH-1) begin
+                            filter_valid_q[i] <= 1'b0;
+                            filter_cross_q[i] <= 1'b0;
+                            filter_id_q[i]    <= {TRANS_SLV_ID_W{1'b0}};
+                        end else begin
+                            filter_valid_q[i] <= filter_valid_q[i+1];
+                            filter_cross_q[i] <= filter_cross_q[i+1];
+                            filter_id_q[i]    <= filter_id_q[i+1];
+                        end
+                    end
+                end
+            end
+
+            if (filter_wr_en & ~filter_full) begin
+                filter_valid_q[filter_push_slot] <= 1'b1;
+                filter_cross_q[filter_push_slot] <= AR_crossing_flag_i;
+                filter_id_q[filter_push_slot]    <= AR_AxID_i;
+            end
+
+            case ({(filter_wr_en & ~filter_full), filter_rd_en})
+                2'b10: filter_count_q <= filter_count_q + 1'b1;
+                2'b01: filter_count_q <= filter_count_q - 1'b1;
+                default: filter_count_q <= filter_count_q;
+            endcase
+        end
+    end
 
 endmodule
+
 
 module sa_W_channel
 #(
@@ -685,6 +824,7 @@ module sa_W_channel
     wire    [ADDR_INFO_W-1:0]       ADDR_info_valid;
     wire                            fifo_order_rd_en;
     wire                            fifo_order_full;
+    wire                            fifo_order_almost_full;
     wire                            fifo_order_empt;
     wire    [MST_ID_W-1:0]          Ax_mst_id_valid;       
     wire    [TRANS_DATA_LEN_W-1:0]  Ax_AxLEN_valid;
@@ -754,7 +894,7 @@ module sa_W_channel
         .wr_ready_o(),
         .rd_ready_o(),
         .almost_empty_o(),
-        .almost_full_o(),
+        .almost_full_o(fifo_order_almost_full),
         .counter()
     );
     // Slave skid buffer (pipelined in/out)
@@ -848,7 +988,7 @@ module sa_W_channel
     assign slv_handshake_occur      = ssb_bwd_valid & ssb_bwd_ready;
     // Output control 
     assign WDATA_channel_shift_en   = transaction_boot | slv_handshake_occur;
-    assign AW_stall_o               = fifo_order_full;
+    assign AW_stall_o               = fifo_order_full | fifo_order_almost_full;
     assign s_WVALID_o_nxt           = transaction_en;
     assign s_WLAST_o_nxt            = (Ax_AxLEN_valid == transfer_ctn_r) & transaction_en;
     assign s_WSTRB_o_nxt            = dsp_WSTRB_valid[Ax_mst_id_valid];
@@ -944,6 +1084,7 @@ module sa_B_channel
     wire                            fifo_filter_wr_en;
     wire                            fifo_filter_rd_en;
     wire                            fifo_filter_full;
+    wire                            fifo_filter_almost_full;
     wire                            fifo_filter_empty;
     // ---- Write response filter
     wire    [TRANS_SLV_ID_W-1:0]    AWID_valid;
@@ -985,7 +1126,7 @@ module sa_B_channel
         .wr_ready_o(),
         .rd_ready_o(),
         .almost_empty_o(),
-        .almost_full_o(),
+        .almost_full_o(fifo_filter_almost_full),
         .counter()
     );
     // Slave skid buffer (pipelined in/out)
@@ -1005,8 +1146,8 @@ module sa_B_channel
     // Combinational logic
     // -- FIFO WRESP filter
     assign filter_info = {AW_crossing_flag_i, AW_AxID_i};
-    // assign fifo_filter_wr_en = AW_shift_en_i & AW_crossing_flag_i;
-    // assign fifo_filter_rd_en = slv_handshake_occur & filter_condition;
+//    assign fifo_filter_wr_en = AW_shift_en_i & AW_crossing_flag_i;
+//    assign fifo_filter_rd_en = slv_handshake_occur & filter_condition;
     assign fifo_filter_wr_en = AW_shift_en_i;
     assign fifo_filter_rd_en = slv_handshake_occur; // Design constraint: slave must return BRESP in AW issue order
     // -- Write response filter
@@ -1036,7 +1177,7 @@ module sa_B_channel
     assign ssb_fwd_ready    = filter_BREADY_gen;
     assign {ssb_fwd_BID, ssb_fwd_BRESP} = ssb_fwd_data;
     // -- Write Address channel Output
-    assign AW_stall_o = fifo_filter_full;
+    assign AW_stall_o = fifo_filter_full | fifo_filter_almost_full;
     
 endmodule
 
@@ -1050,15 +1191,18 @@ module ai_slave_arbitration
     // Transaction configuration
     parameter                       DATA_WIDTH          = 32,
     parameter                       ADDR_WIDTH          = 32,
-    parameter                       TRANS_MST_ID_W      = 5,                                // Bus width of master transaction ID 
-    parameter                       TRANS_SLV_ID_W      = TRANS_MST_ID_W + $clog2(MST_AMT), // Bus width of slave transaction ID
+    parameter                       TRANS_MST_ID_W      = 5,                                // Bus width of original master transaction ID
+    parameter                       ROB_TAG_W           = $clog2(OUTSTANDING_AMT),
+    parameter                       ROB_ID_WIDTH        = ROB_TAG_W + TRANS_MST_ID_W,
+    parameter                       TRANS_SLV_ID_W      = ROB_ID_WIDTH + MST_ID_W,          // {master_id, rob_tag, original_id}
     parameter                       TRANS_BURST_W       = 2,                                // Width of xBURST 
     parameter                       TRANS_DATA_LEN_W    = 8,                                // Bus width of xLEN (AXI4: 8-bit, burst 1-256)
     parameter                       TRANS_DATA_SIZE_W   = 3,                                // Bus width of xSIZE
     parameter                       TRANS_WR_RESP_W     = 2,
     // Slave info configuration
-    parameter [31:0] SLV_BASE_ADDR = 32'h0,
-    parameter [31:0] SLV_ADDR_MASK = 32'h0
+    parameter                       SLV_ID              = 0,
+    parameter                       SLV_ID_MSB_IDX      = 30,
+    parameter                       SLV_ID_LSB_IDX      = 30
 )
 (
     // Input declaration
@@ -1088,7 +1232,7 @@ module ai_slave_arbitration
     // Write response channel
     input   [MST_AMT-1:0]                   dsp_BREADY_i,
     // Read address channel
-    input   [TRANS_MST_ID_W*MST_AMT-1:0]    dsp_ARID_i,
+    input   [ROB_ID_WIDTH*MST_AMT-1:0]      dsp_ARID_i,
     input   [ADDR_WIDTH*MST_AMT-1:0]        dsp_ARADDR_i,
     input   [TRANS_BURST_W*MST_AMT-1:0]     dsp_ARBURST_i,
     input   [TRANS_DATA_LEN_W*MST_AMT-1:0]  dsp_ARLEN_i,
@@ -1133,7 +1277,7 @@ module ai_slave_arbitration
     // Read address channel (master)
     output  [MST_AMT-1:0]                   dsp_ARREADY_o,
     // Read data channel (master)
-    output  [TRANS_MST_ID_W*MST_AMT-1:0]    dsp_RID_o,
+    output  [ROB_ID_WIDTH*MST_AMT-1:0]      dsp_RID_o,
     output  [DATA_WIDTH*MST_AMT-1:0]        dsp_RDATA_o,
     output  [TRANS_WR_RESP_W*MST_AMT-1:0]   dsp_RRESP_o,
     output  [MST_AMT-1:0]                   dsp_RLAST_o,
@@ -1206,12 +1350,14 @@ module ai_slave_arbitration
         .DATA_WIDTH(DATA_WIDTH),
         .ADDR_WIDTH(ADDR_WIDTH),
         .TRANS_MST_ID_W(TRANS_MST_ID_W),
+        .DSP_ID_W(TRANS_MST_ID_W),
         .TRANS_SLV_ID_W(TRANS_SLV_ID_W),
         .TRANS_BURST_W(TRANS_BURST_W),
         .TRANS_DATA_LEN_W(TRANS_DATA_LEN_W),
         .TRANS_DATA_SIZE_W(TRANS_DATA_SIZE_W),
-        .SLV_BASE_ADDR(SLV_BASE_ADDR),
-        .SLV_ADDR_MASK(SLV_ADDR_MASK)
+        .SLV_ID(SLV_ID),
+        .SLV_ID_MSB_IDX(SLV_ID_MSB_IDX),
+        .SLV_ID_LSB_IDX(SLV_ID_LSB_IDX)
     ) AW_channel (
         // Input
         .ACLK_i(ACLK_i),
@@ -1314,12 +1460,14 @@ module ai_slave_arbitration
         .DATA_WIDTH(DATA_WIDTH),
         .ADDR_WIDTH(ADDR_WIDTH),
         .TRANS_MST_ID_W(TRANS_MST_ID_W),
+        .DSP_ID_W(ROB_ID_WIDTH),
         .TRANS_SLV_ID_W(TRANS_SLV_ID_W),
         .TRANS_BURST_W(TRANS_BURST_W),
         .TRANS_DATA_LEN_W(TRANS_DATA_LEN_W),
         .TRANS_DATA_SIZE_W(TRANS_DATA_SIZE_W),
-        .SLV_BASE_ADDR(SLV_BASE_ADDR),
-        .SLV_ADDR_MASK(SLV_ADDR_MASK)
+        .SLV_ID(SLV_ID),
+        .SLV_ID_MSB_IDX(SLV_ID_MSB_IDX),
+        .SLV_ID_LSB_IDX(SLV_ID_LSB_IDX)
     ) AR_channel (
         // Input
         .ACLK_i(ACLK_i),
@@ -1365,7 +1513,8 @@ module ai_slave_arbitration
         .DATA_WIDTH(DATA_WIDTH),
         .ADDR_WIDTH(ADDR_WIDTH),
         .TRANS_MST_ID_W(TRANS_MST_ID_W),
-        .TRANS_SLV_ID_W(TRANS_SLV_ID_W)
+        .TRANS_SLV_ID_W(TRANS_SLV_ID_W),
+        .DSP_RID_W(ROB_ID_WIDTH)
     ) R_channel (
         .ACLK_i(ACLK_i),
         .ARESETn_i(ARESETn_i),
