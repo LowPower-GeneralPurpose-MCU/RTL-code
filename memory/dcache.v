@@ -177,7 +177,6 @@ module data_cache #(
         end else begin
             state <= next_state;
             if (state == IDLE && (cpu_read_req || cpu_write_req)) req_addr <= cpu_addr;
-            
             if (state == R_WAIT && m_axi_rvalid && m_axi_rready) begin
                 if (uncache_en) fetch_buffer[C_M_AXI_DATA_W-1:0] <= m_axi_rdata;
                 else fetch_buffer <= {m_axi_rdata, fetch_buffer[BLOCK_W-1:C_M_AXI_DATA_W]};

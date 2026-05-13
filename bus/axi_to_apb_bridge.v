@@ -309,12 +309,15 @@ module axi_to_apb_bridge #(
             case (arb_state)
                 ARB_IDLE: begin
                     // Ưu tiên Read > Write giống hệt code gốc của bạn
-                    if (req_r) begin
-                        apb_grant_read <= 1'b1;
-                        arb_state <= ARB_PUSH;
-                    end else if (req_w) begin
-                        apb_grant_read <= 1'b0;
-                        arb_state <= ARB_PUSH;
+                    if (!ack_r && !ack_w) begin
+                        // Avoid replaying a command while the source FSM is dropping req_*.
+                        if (req_r) begin
+                            apb_grant_read <= 1'b1;
+                            arb_state <= ARB_PUSH;
+                        end else if (req_w) begin
+                            apb_grant_read <= 1'b0;
+                            arb_state <= ARB_PUSH;
+                        end
                     end
                 end
 

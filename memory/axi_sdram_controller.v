@@ -6,7 +6,7 @@ module axi_sdram_controller #(
     // ==========================================
     parameter ADDR_WIDTH            = 32,
     parameter DATA_WIDTH            = 32,
-    parameter ID_WIDTH              = 7,
+    parameter ID_WIDTH              = 5,
     
     // ==========================================
     // THAM SỐ CẤU HÌNH SDRAM (Ví dụ cho chip 32-bit data)

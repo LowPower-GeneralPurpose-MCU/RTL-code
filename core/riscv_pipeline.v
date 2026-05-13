@@ -311,9 +311,11 @@ module riscv_pipeline #(
     // Stall/flush policy
     // =========================================================================
     wire stall_if_id  = dcache_stall | mf_alu_stall | load_use_stall | stall_ID;
-    wire flush_if_id  = flush_trap | flush_branch | flush_jal | icache_stall;
+    wire flush_if_id  = flush_trap | flush_branch | flush_jal |
+                        (icache_stall & !stall_if_id);
     wire stall_id_ex  = dcache_stall | mf_alu_stall | stall_EX;
-    wire flush_id_ex  = flush_trap | flush_branch | flush_jal | load_use_stall;
+    wire flush_id_ex  = flush_trap | flush_branch | load_use_stall |
+                        (flush_jal & !stall_id_ex);
     wire stall_ex_mem = dcache_stall | stall_MEM;
     wire flush_ex_mem = flush_trap | flush_branch | mf_alu_stall;
     wire stall_mem_wb = dcache_stall | stall_WB;

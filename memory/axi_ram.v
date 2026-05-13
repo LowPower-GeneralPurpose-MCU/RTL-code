@@ -3,7 +3,7 @@
 module axi_ram #(
     parameter ADDR_WIDTH        = 32,
     parameter DATA_WIDTH        = 32,
-    parameter ID_WIDTH          = 7,
+    parameter ID_WIDTH          = 5,
     parameter ADDR_MASK         = 32'h0000_FFFF, // Mask 64KB
     parameter MEM_DEPTH         = 16384,         // 64KB / 4 = 16384 Words
     parameter INIT_FILE         = ""             // Để trống nếu không cần nạp sẵn

@@ -3,7 +3,7 @@
 module axi_spi_flash #(
     parameter ADDR_WIDTH          = 32,
     parameter DATA_WIDTH          = 32,
-    parameter ID_WIDTH            = 7,
+    parameter ID_WIDTH            = 5,
     parameter ADDR_MASK           = 32'h00FF_FFFF, // Thêm lại Mask
     parameter SPI_CLK_DIVIDER     = 2,       
     parameter FLASH_FAST_READ_CMD = 8'h0B,   

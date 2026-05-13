@@ -491,11 +491,13 @@ module top_soc (
         
         // Nối vào dây lõi DCache (400MHz)
         .m_axi_awid      (dc_awid),   .m_axi_awaddr  (dc_awaddr), .m_axi_awlen   (dc_awlen),
-        .m_axi_awsize    (dc_awsize), .m_axi_awburst (dc_awburst),.m_axi_awvalid (dc_awvalid), .m_axi_awready (dc_awready),
+        .m_axi_awsize    (dc_awsize), .m_axi_awburst (dc_awburst),.m_axi_awprot  (dc_awprot),
+        .m_axi_awvalid   (dc_awvalid), .m_axi_awready (dc_awready),
         .m_axi_wdata     (dc_wdata),  .m_axi_wstrb   (dc_wstrb),  .m_axi_wlast   (dc_wlast),  .m_axi_wvalid  (dc_wvalid), .m_axi_wready (dc_wready),
         .m_axi_bid       (dc_bid),    .m_axi_bresp   (dc_bresp),  .m_axi_bvalid  (dc_bvalid), .m_axi_bready  (dc_bready),
         .m_axi_arid      (dc_arid),   .m_axi_araddr  (dc_araddr), .m_axi_arlen   (dc_arlen),
-        .m_axi_arsize    (dc_arsize), .m_axi_arburst (dc_arburst),.m_axi_arvalid (dc_arvalid), .m_axi_arready (dc_arready),
+        .m_axi_arsize    (dc_arsize), .m_axi_arburst (dc_arburst),.m_axi_arprot  (dc_arprot),
+        .m_axi_arvalid   (dc_arvalid), .m_axi_arready (dc_arready),
         .m_axi_rid       (dc_rid),    .m_axi_rdata   (dc_rdata),  .m_axi_rresp   (dc_rresp),  .m_axi_rlast   (dc_rlast),  .m_axi_rvalid  (dc_rvalid), .m_axi_rready (dc_rready)
     );
 
