@@ -158,7 +158,7 @@ module apb_i2c #(
         .data_i(pwdata[7:0]),       .data_o(tx_fifo_rdata_core),
         .wr_valid_i(tx_fifo_wr),    .rd_valid_i(tx_fifo_rd_core),
         .full_o(tx_fifo_full),      .empty_o(tx_fifo_empty),
-        .rst_n(presetn),
+        .wrst_n(presetn),           .rrst_n(i2c_rst_n),
         .wr_ready_o(), .rd_ready_o(), .almost_empty_o(), .almost_full_o()
     );
 
@@ -167,7 +167,7 @@ module apb_i2c #(
         .data_i(core_rx_data),      .data_o(rx_fifo_rdata),
         .wr_valid_i(rx_fifo_wr_core),.rd_valid_i(rx_fifo_rd),
         .full_o(rx_fifo_full),      .empty_o(rx_fifo_empty),
-        .rst_n(presetn),
+        .wrst_n(i2c_rst_n),         .rrst_n(presetn),
         .wr_ready_o(), .rd_ready_o(), .almost_empty_o(), .almost_full_o()
     );
 

@@ -37,6 +37,7 @@
 //   timeout_out : AR đang chờ quá TIMEOUT_W cycles
 // ============================================================
 
+
 module axi4_master_rd #(
     parameter ADDR_W    = 32,
     parameter ID_W      = 4,
@@ -74,7 +75,6 @@ module axi4_master_rd #(
     output reg  [ADDR_W-1:0] ARADDR,
     output reg  [LEN_W-1:0]  ARLEN,
     output reg  [2:0]        ARSIZE,
-    output wire [1:0]        ARBURST,
     output reg  [ID_W-1:0]   ARID,
     output reg               ARVALID,
     input  wire              ARREADY,
@@ -87,7 +87,6 @@ module axi4_master_rd #(
     input  wire                   RVALID,
     output wire                   RREADY
 );
-    assign ARBURST = 2'b01;
 
     // localparam
     // function phải khai báo TRƯỚC localparam dùng nó (Verilog-2001)
@@ -123,7 +122,7 @@ module axi4_master_rd #(
         .clk         (clk),
         .rst_n       (rst_n),
         .wr_en       (cmd_fifo_push),
-        .wr_data     (cmd_id),        // lưu cmd_id khi gửi AR
+        .wr_data     (ARID),        // lưu cmd_id khi gửi AR
         .rd_en       (cmd_fifo_pop),
         .rd_data     (cmd_fifo_rdata),
         .full        (cmd_fifo_full),
@@ -165,8 +164,7 @@ module axi4_master_rd #(
     assign dout_valid = RVALID;
     assign dout_data  = RDATA;
     assign dout_last  = RLAST;
-    // dout_id: lấy từ FIFO (0-latency, available ngay khi RVALID)
-    assign dout_id    = cmd_fifo_empty ? {ID_W{1'b0}} : cmd_fifo_rdata;
+    assign dout_id    = RID;
 
     // Response: 1 cycle sau khi burst kết thúc
     reg              rsp_valid_r;
@@ -181,7 +179,7 @@ module axi4_master_rd #(
         end else begin
             rsp_valid_r <= cmd_fifo_pop;
             if (cmd_fifo_pop) begin
-                rsp_id_r  <= cmd_fifo_rdata;
+                rsp_id_r  <= RID;
                 rsp_err_r <= RRESP;
             end
         end
@@ -205,6 +203,8 @@ module axi4_master_rd #(
 
 endmodule
 
+
+`timescale 1ns/1ps
 // ============================================================
 // axi4_master_wr.v — AXI4 Write Master (32-bit data bus)
 // Layer : Reusable IP
@@ -270,7 +270,6 @@ module axi4_master_wr #(
     output reg  [ADDR_W-1:0] AWADDR,
     output reg  [LEN_W-1:0]  AWLEN,
     output reg  [2:0]        AWSIZE,
-    output wire [1:0]        AWBURST,
     output reg  [ID_W-1:0]   AWID,
     output reg               AWVALID,
     input  wire              AWREADY,
@@ -288,7 +287,6 @@ module axi4_master_wr #(
     input  wire              BVALID,
     output wire              BREADY
 );
-    assign AWBURST = 2'b01;
 
     // localparam
     function integer clog2_fn;
@@ -304,8 +302,8 @@ module axi4_master_wr #(
     localparam CMD_D_W = clog2_fn(CMD_DEPTH);  // = PTR_W cần truyền vào sync_fifo
 
     // AW channel FSM
-    // Tách AW và W để tối đa bandwidth (AW phát trước W data)
-    assign cmd_ready = ~AWVALID | AWREADY;
+    // Tách AW và W để tối đa bandwidth (AW phát trước W data).
+    // cmd_ready is gated below by the outstanding tracking FIFOs.
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -328,14 +326,15 @@ module axi4_master_wr #(
     end
 
     // W channel — beat counter
-    // Khi AW accepted -> capture len -> phát W beats
-    // FIFO lưu {len, id} để W channel dùng sau khi AW accepted
-    localparam WF_W = LEN_W + ID_W;
+    // Khi AW accepted -> push {len,id} vào wf FIFO -> W channel bắt đầu gửi data
+    localparam WF_W   = LEN_W + ID_W;
+    localparam WF_CNT = CMD_D_W + 1;
 
     wire              wf_push  = AWVALID & AWREADY;
     wire              wf_pop;
     wire              wf_empty, wf_full;
     wire [WF_W-1:0]   wf_rdata;
+    wire [WF_CNT-1:0] wf_count;
 
     sync_ff #(
         .DATA_W    (WF_W),
@@ -355,33 +354,46 @@ module axi4_master_wr #(
         .empty       (wf_empty),
         .almost_full (),
         .almost_empty(),
-        .count       ()
+        .count       (wf_count)
     );
 
     wire [LEN_W-1:0] cur_len = wf_rdata[WF_W-1 : ID_W];
     wire [ID_W-1:0]  cur_id  = wf_rdata[ID_W-1  : 0];
 
-    // Beat counter
     reg [LEN_W-1:0]  beat_cnt;
     reg              w_active;
+    reg              w_reload;  // 1-cycle state: đợi FIFO rd_ptr advance
 
     wire w_beat = WVALID & WREADY;
     wire w_last = w_beat & WLAST;
 
-    assign wf_pop = w_last;   // giải phóng FIFO slot sau burst xong
+    assign wf_pop = w_last;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             w_active <= 1'b0;
+            w_reload <= 1'b0;
             beat_cnt <= {LEN_W{1'b0}};
         end else begin
-            if (!w_active & !wf_empty & din_valid) begin
-                // Bắt đầu burst mới
+            // w_reload: 1 cycle sau w_last khi còn burst tiếp theo
+            // Cycle này rd_ptr đã advance → cur_len hợp lệ
+            if (w_reload) begin
+                w_reload <= 1'b0;
+                if (!wf_empty) begin
+                    w_active <= 1'b1;
+                    beat_cnt <= cur_len;
+                end
+            end else if (!w_active && !wf_empty) begin
+                // Bắt đầu burst đầu tiên
                 w_active <= 1'b1;
                 beat_cnt <= cur_len;
             end else if (w_active & w_last) begin
                 w_active <= 1'b0;
                 beat_cnt <= {LEN_W{1'b0}};
+                // Nếu còn burst tiếp theo: vào w_reload để đợi FIFO advance
+                // wf_count > 1 nghĩa là sau pop vẫn còn ≥1 entry
+                if (wf_count > {{(WF_CNT-1){1'b0}}, 1'b1})
+                    w_reload <= 1'b1;
             end else if (w_active & w_beat) begin
                 beat_cnt <= beat_cnt - 1'b1;
             end
@@ -389,16 +401,17 @@ module axi4_master_wr #(
     end
 
     // W outputs
-    assign WVALID  = w_active & din_valid;
-    assign WDATA   = din_data;
-    assign WLAST   = w_active & (beat_cnt == {LEN_W{1'b0}});
-    assign WSTRB   = {`AXI_STRB_W{1'b1}};   // full-width write
+    assign WVALID    = w_active & din_valid;
+    assign WDATA     = din_data;
+    assign WLAST     = WVALID & (beat_cnt == {LEN_W{1'b0}});
+    assign WSTRB     = {`AXI_STRB_W{1'b1}};   // full-width write
     assign din_ready = w_active & WREADY;
 
     // B channel
     // FIFO lưu AWID để map BID -> rsp_id (hỗ trợ out-of-order B)
     wire              bf_push  = AWVALID & AWREADY;
-    wire              bf_pop   = BVALID & BREADY;
+    wire              bf_pop;
+    wire              bf_full;
     wire              bf_empty;
     wire [ID_W-1:0]   bf_rdata;
 
@@ -416,14 +429,18 @@ module axi4_master_wr #(
         .wr_data     (AWID),
         .rd_en       (bf_pop),
         .rd_data     (bf_rdata),
-        .full        (),
+        .full        (bf_full),
         .empty       (bf_empty),
         .almost_full (),
         .almost_empty(),
         .count       ()
     );
 
-    assign BREADY = 1'b1;   // DMA luôn chấp nhận B response
+    assign BREADY = 1'b1;
+    assign bf_pop = BVALID & BREADY & ~bf_empty;
+
+    // Do not accept a new AW unless both metadata FIFOs have space.
+    assign cmd_ready = (~AWVALID | AWREADY) & ~wf_full & ~bf_full;
 
     reg              rsp_valid_r;
     reg [ID_W-1:0]   rsp_id_r;
@@ -437,7 +454,7 @@ module axi4_master_wr #(
         end else begin
             rsp_valid_r <= bf_pop;
             if (bf_pop) begin
-                rsp_id_r  <= bf_rdata;
+                rsp_id_r  <= BID;
                 rsp_err_r <= BRESP;
             end
         end
@@ -465,7 +482,7 @@ module axi4_master_wr #(
     ) u_w_to (
         .clk     (clk),
         .rst_n   (rst_n),
-        .valid   (WVALID & ~WREADY),
+        .valid   (w_active & (~din_valid | (WVALID & ~WREADY))),
         .ack     (WVALID & WREADY & WLAST),
         .timeout (timeout_w)
     );

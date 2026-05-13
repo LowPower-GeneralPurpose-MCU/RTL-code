@@ -34,7 +34,7 @@ module apb_pwm #(
     reg [31:0] reg_val;
     
     wire apb_write = psel && penable && pwrite;
-    wire apb_read  = psel && !penable && !pwrite; // Đọc ở pha Setup
+    wire apb_read  = psel &&  penable && !pwrite; // Đọc ở pha Enable
 
     // --- Logic Giao tiếp APB ---
     always @(posedge pclk or negedge presetn) begin

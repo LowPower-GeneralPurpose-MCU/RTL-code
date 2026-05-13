@@ -3,7 +3,7 @@
 module axi_rom #(
     parameter ADDR_WIDTH        = 32,
     parameter DATA_WIDTH        = 32,
-    parameter ID_WIDTH          = 5,
+    parameter ID_WIDTH          = 7,
     parameter ADDR_MASK         = 32'h0000_3FFF, // Mask 16KB
     parameter MEM_DEPTH         = 4096,          // 16KB / 4 = 4096 Words
     parameter INIT_FILE         = "boot.mem"     // File chứa mã máy
@@ -180,10 +180,13 @@ module axi_rom #(
                             s_axi_rlast  <= 1'b0;
                             r_state      <= R_IDLE;
                         end else begin
-                            r_count     <= r_count + 1;
+                            // Back-to-back beats: keep rvalid=1.
+                            // BRAM already prefetched next beat (is_active_read fires this cycle),
+                            // so rdata_out is valid on the very next clock edge.
+                            r_count     <= r_count + 8'd1;
                             ar_addr_reg <= ar_addr_reg + (1 << ar_size_reg);
-                            s_axi_rvalid <= 1'b0; // Hạ xuống để FETCH nhịp tiếp theo
-                            r_state      <= R_FETCH;
+                            s_axi_rlast <= (r_count + 8'd1 == ar_len_reg);
+                            // rvalid stays 1, r_state stays R_DATA
                         end
                     end
                 end

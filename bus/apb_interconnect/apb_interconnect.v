@@ -14,7 +14,7 @@ module apb_interconnect #(
     parameter SLV6_BASE = 32'h4000_6000, parameter SLV6_MASK = 32'hFFFF_F000, // S6: CORDIC
     parameter SLV7_BASE = 32'h4000_7000, parameter SLV7_MASK = 32'hFFFF_F000, // S7: Syscon
     parameter SLV8_BASE = 32'h4400_0000, parameter SLV8_MASK = 32'hFC00_0000, // S8: PLIC
-    parameter SLV9_BASE = 32'h4000_8000, parameter SLV9_MASK = 32'hFFFF_F000  // S9: DMA Configuration
+    parameter SLV9_BASE = 32'h4000_8000, parameter SLV9_MASK = 32'hFFFF_C000  // S9: DMA Configuration
 )(
     input  wire                     clk,
     input  wire                     rst_n,

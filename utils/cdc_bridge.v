@@ -226,10 +226,11 @@ module cdc_async_fifo_wrapper #(
         .rd_valid_i    (ren),
         .empty_o       (rempty),
         .full_o        (wfull),
-        .wr_ready_o    (), // Bỏ trống vì wrapper cũ dùng cờ wfull
+        .wr_ready_o    (),
         .rd_ready_o    (),
         .almost_empty_o(),
         .almost_full_o (),
-        .rst_n         (wrst_n) // Dùng reset của miền write làm reset chung
+        .wrst_n        (wrst_n), // Write-domain reset
+        .rrst_n        (rrst_n)  // Read-domain reset (separate domain)
     );
 endmodule
