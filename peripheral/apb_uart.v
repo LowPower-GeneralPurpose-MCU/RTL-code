@@ -124,7 +124,7 @@ module apb_uart #(
         .ASFIFO_TYPE(0), .DATA_WIDTH(8), .FIFO_DEPTH(FIFO_DEPTH), .NUM_SYNC_FF(2)
     ) u_tx_fifo (
         .clk_wr_domain(pclk),       .clk_rd_domain(uart_clk),
-        .rst_n(presetn & uart_rst_n),
+        .wrst_n(presetn),           .rrst_n(uart_rst_n),
         .data_i(pwdata[7:0]),       .data_o(tx_fifo_rdata),
         .wr_valid_i(tx_fifo_wr),    .rd_valid_i(tx_fifo_rd),
         .wr_ready_o(),              .rd_ready_o(),
@@ -137,7 +137,7 @@ module apb_uart #(
         .ASFIFO_TYPE(0), .DATA_WIDTH(8), .FIFO_DEPTH(FIFO_DEPTH), .NUM_SYNC_FF(2)
     ) u_rx_fifo (
         .clk_wr_domain(uart_clk),   .clk_rd_domain(pclk),
-        .rst_n(presetn & uart_rst_n),
+        .wrst_n(uart_rst_n),        .rrst_n(presetn),
         .data_i(rx_fifo_rdata_core),.data_o(rx_fifo_rdata),
         .wr_valid_i(rx_fifo_wr),    .rd_valid_i(rx_fifo_rd),
         .wr_ready_o(),              .rd_ready_o(),

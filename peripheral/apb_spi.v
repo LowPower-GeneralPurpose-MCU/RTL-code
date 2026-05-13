@@ -140,7 +140,7 @@ module apb_spi #(
         .data_i(pwdata[7:0]),       .data_o(tx_data_core),
         .wr_valid_i(tx_wr_apb),     .rd_valid_i(tx_rd_core),
         .full_o(tx_full),           .empty_o(tx_empty),
-        .rst_n(presetn),
+        .wrst_n(presetn),           .rrst_n(spi_rst_n),
         .wr_ready_o(), .rd_ready_o(), .almost_empty_o(), .almost_full_o()
     );
 
@@ -149,7 +149,7 @@ module apb_spi #(
         .data_i(spi_rx_shift),      .data_o(rx_data_apb),
         .wr_valid_i(rx_wr_core),    .rd_valid_i(rx_rd_apb),
         .full_o(rx_full),           .empty_o(rx_empty),
-        .rst_n(presetn),
+        .wrst_n(spi_rst_n),         .rrst_n(presetn),
         .wr_ready_o(), .rd_ready_o(), .almost_empty_o(), .almost_full_o()
     );
 
